@@ -210,12 +210,23 @@ function updateMemberForms() {
   }
 }
 
+// ── Remove form row ───────────────────────────────────────────────────────────
+function removeForm(btn) {
+  const form = btn.closest('.account-form');
+  if (!form) return;
+  const container = form.parentElement;
+  form.remove();
+  const countMap = { 'banks-container': 'w-bank-count', 'cc-container': 'w-cc-count', 'loans-container': 'w-loan-count' };
+  if (countMap[container.id]) document.getElementById(countMap[container.id]).value = container.children.length;
+}
+
 // ── Bank forms ────────────────────────────────────────────────────────────────
 function makeBankForm(i) {
   const div = document.createElement('div');
   div.className = 'account-form';
   div.innerHTML =
-    '<div class="member-title">חשבון #' + (i + 1) + '</div>' +
+    '<div class="form-title-row"><div class="member-title">חשבון #' + (i + 1) + '</div>' +
+    '<button type="button" class="remove-form-btn" onclick="removeForm(this)">✕ הסר</button></div>' +
     '<div class="field-grid">' +
     '<div class="field"><label>בנק <span class="req">*</span></label>' +
     '<select class="b-bank">' +
@@ -253,7 +264,8 @@ function makeCCForm(i) {
   const div = document.createElement('div');
   div.className = 'account-form';
   div.innerHTML =
-    '<div class="member-title">כרטיס #' + (i + 1) + '</div>' +
+    '<div class="form-title-row"><div class="member-title">כרטיס #' + (i + 1) + '</div>' +
+    '<button type="button" class="remove-form-btn" onclick="removeForm(this)">✕ הסר</button></div>' +
     '<div class="field-grid">' +
     '<div class="field"><label>חברת אשראי <span class="req">*</span></label>' +
     '<select class="cc-company">' +
@@ -281,7 +293,8 @@ function makeLoanForm(i) {
   const div = document.createElement('div');
   div.className = 'account-form';
   div.innerHTML =
-    '<div class="member-title">הלוואה #' + (i + 1) + '</div>' +
+    '<div class="form-title-row"><div class="member-title">הלוואה #' + (i + 1) + '</div>' +
+    '<button type="button" class="remove-form-btn" onclick="removeForm(this)">✕ הסר</button></div>' +
     '<div class="field-grid">' +
     '<div class="field"><label>סוג הלוואה <span class="req">*</span></label>' +
     '<select class="l-type">' +
@@ -309,6 +322,8 @@ function makeSavingsRow(i) {
   const div = document.createElement('div');
   div.className = 'account-form';
   div.innerHTML =
+    '<div class="form-title-row"><div class="member-title">חיסכון/השקעה #' + (i + 1) + '</div>' +
+    '<button type="button" class="remove-form-btn" onclick="removeForm(this)">✕ הסר</button></div>' +
     '<div class="field-grid">' +
     '<div class="field"><label>סוג <span class="req">*</span></label>' +
     '<select class="s-type" onchange="toggleCustomType(this)">' +
