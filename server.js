@@ -55,39 +55,84 @@ function saveProfile(data) {
 }
 
 const DATE_HEADERS = ['תאריך', 'date'];
-const DESC_HEADERS = ['תיאור', 'פירוט', 'description', 'name'];
-const AMOUNT_HEADERS = ['סכום', 'חיוב', 'זיכוי', 'amount', 'credit', 'debit'];
+const DESC_HEADERS = ['תיאור פעולה', 'תיאור', 'פירוט', 'פרטים', 'description', 'name'];
+const AMOUNT_HEADERS = ['סכום', 'amount'];
+const DEBIT_HEADERS = ['חיוב'];
+const CREDIT_HEADERS = ['זיכוי'];
 const BALANCE_HEADERS = ['יתרה', 'balance'];
 
+const ALL_KNOWN = [...DATE_HEADERS, ...DESC_HEADERS, ...AMOUNT_HEADERS, ...DEBIT_HEADERS, ...CREDIT_HEADERS, ...BALANCE_HEADERS];
+
+function findHeaderRowIndex(records) {
+  for (let i = 0; i < Math.min(records.length, 15); i++) {
+    const cells = records[i].map(c => (c || '').toString().toLowerCase().trim());
+    const hits = cells.filter(c => ALL_KNOWN.some(k => c.includes(k.toLowerCase())));
+    if (hits.length >= 2) return i;
+  }
+  return 0;
+}
+
 function detectColumns(headers) {
-  const lower = headers.map(h => (h || '').toLowerCase().trim());
+  const lower = headers.map(h => (h || '').toString().toLowerCase().trim());
   const find = (opts) => {
     const idx = lower.findIndex(h => opts.some(o => h.includes(o.toLowerCase())));
     return idx >= 0 ? idx : null;
   };
   return {
-    date: find(DATE_HEADERS),
+    date:        find(DATE_HEADERS),
     description: find(DESC_HEADERS),
-    amount: find(AMOUNT_HEADERS),
-    balance: find(BALANCE_HEADERS)
+    amount:      find(AMOUNT_HEADERS),
+    debit:       find(DEBIT_HEADERS),
+    credit:      find(CREDIT_HEADERS),
+    balance:     find(BALANCE_HEADERS)
   };
 }
 
 function parseNum(s) {
-  return parseFloat((s || '').toString().replace(/[^\d.-]/g, '')) || 0;
+  if (s === null || s === undefined || s === '') return 0;
+  return parseFloat(s.toString().replace(/[^\d.-]/g, '')) || 0;
+}
+
+// Normalize Israeli dates (DD/MM/YYYY → YYYY-MM-DD) for consistent monthly grouping
+function normalizeDate(raw) {
+  if (!raw) return '';
+  const s = raw.toString().trim();
+  const m = s.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})$/);
+  if (m) return `${m[3]}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`;
+  return s;
 }
 
 function rowToTransaction(row, cols, account, sourceFile) {
-  const get = (col, fallback) => col !== null ? (row[col] || '') : (row[fallback] || '');
+  const get = (col, fallback) => col !== null && col !== undefined ? (row[col] ?? '') : (row[fallback] ?? '');
+
+  let amount = 0;
+  if (cols.debit !== null || cols.credit !== null) {
+    // Separate debit/credit columns (Hapoalim style)
+    const credit = parseNum(get(cols.credit, -1));
+    const debit  = parseNum(get(cols.debit,  -1));
+    amount = credit - debit; // credit = income (+), debit = expense (-)
+  } else {
+    amount = parseNum(get(cols.amount, 2));
+  }
+
   return {
     account,
-    date: get(cols.date, 0),
-    description: get(cols.description, 1) || (row[2] || ''),
-    amount: parseNum(get(cols.amount, 2)),
-    balance: parseNum(get(cols.balance, 3)),
+    date:        normalizeDate(get(cols.date, 0)),
+    description: String(get(cols.description, 1) || get(null, 2) || ''),
+    amount,
+    balance:     parseNum(get(cols.balance, cols.debit !== null ? 4 : 3)),
     source_file: sourceFile,
     imported_at: new Date().toISOString()
   };
+}
+
+function parseRecords(records, accountName, sourceFile) {
+  if (records.length < 2) return [];
+  const headerIdx = findHeaderRowIndex(records);
+  const cols = detectColumns(records[headerIdx].map(String));
+  return records.slice(headerIdx + 1)
+    .map(row => rowToTransaction(row, cols, accountName, sourceFile))
+    .filter(r => r.description || r.amount);
 }
 
 const insertTx = db.prepare(
@@ -123,23 +168,13 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
       let content = raw.toString('utf8');
       if (content.includes('�')) content = raw.toString('latin1');
       const records = csv.parse(content, { skip_empty_lines: true, relax_column_count: true, bom: true });
-      if (records.length > 1) {
-        const cols = detectColumns(records[0].map(String));
-        parsed = records.slice(1)
-          .map(row => rowToTransaction(row, cols, accountName, req.file.originalname))
-          .filter(r => r.description || r.amount);
-      }
+      parsed = parseRecords(records, accountName, req.file.originalname);
     } else if (ext === '.xlsx' || ext === '.xls') {
       const xlsx = require('xlsx');
       const wb = xlsx.readFile(filePath);
       const ws = wb.Sheets[wb.SheetNames[0]];
       const records = xlsx.utils.sheet_to_json(ws, { header: 1, defval: '' });
-      if (records.length > 1) {
-        const cols = detectColumns(records[0].map(String));
-        parsed = records.slice(1)
-          .map(row => rowToTransaction(row, cols, accountName, req.file.originalname))
-          .filter(r => r.description || r.amount);
-      }
+      parsed = parseRecords(records, accountName, req.file.originalname);
     } else if (ext === '.pdf') {
       try {
         const pdfParse = require('pdf-parse');
