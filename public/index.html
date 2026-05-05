@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>דשבורד פיננסי אישי</title>
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+
+<!-- WIZARD OVERLAY -->
+<div id="wizard-overlay" class="overlay hidden">
+  <div class="wizard-box">
+    <div class="wizard-header">
+      <div class="wizard-logo">₪</div>
+      <h1>ברוך הבא לדשבורד הפיננסי</h1>
+      <p>נגדיר יחד את הפרופיל שלך כדי שהסוכן יוכל לנתח את המצב הפיננסי שלך בצורה מדויקת</p>
+    </div>
+
+    <div class="steps-bar">
+      <div class="step active" data-step="1"><span>1</span> משק הבית</div>
+      <div class="step" data-step="2"><span>2</span> חשבונות בנק</div>
+      <div class="step" data-step="3"><span>3</span> כרטיסי אשראי</div>
+      <div class="step" data-step="4"><span>4</span> הלוואות</div>
+      <div class="step" data-step="5"><span>5</span> חיסכון והשקעות</div>
+    </div>
+
+    <!-- Step 1: Household -->
+    <div class="wizard-step active" id="step-1">
+      <h2>משק הבית</h2>
+      <div class="field-grid">
+        <div class="field">
+          <label>סטטוס משפחתי</label>
+          <select id="w-status">
+            <option value="single">רווק/ה</option>
+            <option value="married">נשוי/אה</option>
+            <option value="divorced">גרוש/ה</option>
+            <option value="widowed">אלמן/ה</option>
+          </select>
+        </div>
+        <div class="field"></div>
+        <div class="field">
+          <label>מספר בעלי משק בית (מרוויחים)</label>
+          <input type="number" id="w-adults" min="1" max="10" value="1" placeholder="לדוגמא: 2">
+        </div>
+        <div class="field">
+          <label>מספר ילדים / תלויים</label>
+          <input type="number" id="w-children" min="0" max="15" value="0" placeholder="לדוגמא: 2">
+        </div>
+      </div>
+      <button class="btn-secondary small" onclick="updateMemberForms()" style="margin-bottom:1.25rem">עדכן</button>
+
+      <div id="adults-section">
+        <div style="font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:#888;margin-bottom:8px">בעלי משק בית — הכנסות</div>
+        <div id="adults-container"></div>
+      </div>
+
+      <div id="children-section" style="margin-top:1.25rem;display:none">
+        <div style="font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:#888;margin-bottom:8px">ילדים / תלויים</div>
+        <div id="children-container"></div>
+      </div>
+    </div>
+
+    <!-- Step 2: Bank accounts -->
+    <div class="wizard-step" id="step-2">
+      <h2>חשבונות בנק</h2>
+      <div class="field">
+        <label>כמה חשבונות בנק יש לך?</label>
+        <input type="number" id="w-bank-count" min="0" max="20" value="1" placeholder="מספר חשבונות">
+      </div>
+      <div id="banks-container"></div>
+      <button class="btn-secondary small" onclick="updateBankForms()">עדכן מספר חשבונות</button>
+    </div>
+
+    <!-- Step 3: Credit cards -->
+    <div class="wizard-step" id="step-3">
+      <h2>כרטיסי אשראי</h2>
+      <div class="field">
+        <label>כמה כרטיסי אשראי יש לך?</label>
+        <input type="number" id="w-cc-count" min="0" max="20" value="1" placeholder="מספר כרטיסים">
+      </div>
+      <div id="cc-container"></div>
+      <button class="btn-secondary small" onclick="updateCCForms()">עדכן מספר כרטיסים</button>
+    </div>
+
+    <!-- Step 4: Loans -->
+    <div class="wizard-step" id="step-4">
+      <h2>הלוואות פעילות</h2>
+      <div class="field">
+        <label>כמה הלוואות פעילות יש לך?</label>
+        <input type="number" id="w-loan-count" min="0" max="20" value="0" placeholder="מספר הלוואות">
+      </div>
+      <div id="loans-container"></div>
+      <button class="btn-secondary small" onclick="updateLoanForms()">עדכן מספר הלוואות</button>
+    </div>
+
+    <!-- Step 5: Savings & investments -->
+    <div class="wizard-step" id="step-5">
+      <h2>חיסכון, השקעות ופנסיה</h2>
+      <div id="savings-container">
+        <div class="account-form">
+          <div class="field-grid">
+            <div class="field">
+              <label>סוג</label>
+              <select class="s-type">
+                <option value="pension">קרן פנסיה</option>
+                <option value="gemel">קופת גמל</option>
+                <option value="hishtalmut">קרן השתלמות</option>
+                <option value="saving">חיסכון</option>
+                <option value="stocks">תיק השקעות / מניות</option>
+                <option value="crypto">קריפטו</option>
+                <option value="real-estate">נדל"ן</option>
+                <option value="other">אחר</option>
+              </select>
+            </div>
+            <div class="field"><label>שם / חברה</label><input type="text" class="s-name" placeholder="לדוגמא: מנורה מבטחים"></div>
+            <div class="field"><label>הפקדה חודשית (₪)</label><input type="number" class="s-monthly" placeholder="0"></div>
+          </div>
+        </div>
+      </div>
+      <button class="btn-secondary small" onclick="addSavingsRow()">+ הוסף חיסכון/השקעה</button>
+
+      <div class="field" style="margin-top:1.5rem">
+        <label>מטרות פיננסיות עיקריות (אופציונלי)</label>
+        <textarea id="w-goals" rows="3" placeholder="לדוגמא: חיסכון לדירה תוך 5 שנים, פרישה בגיל 65, קרן חירום של 6 משכורות..."></textarea>
+      </div>
+    </div>
+
+    <div class="wizard-nav">
+      <button class="btn-secondary" id="btn-prev" onclick="prevStep()" style="visibility:hidden">← הקודם</button>
+      <div class="step-indicator" id="step-indicator">שלב 1 מתוך 5</div>
+      <button class="btn-primary" id="btn-next" onclick="nextStep()">הבא →</button>
+    </div>
+  </div>
+</div>
+
+<!-- MAIN DASHBOARD -->
+<div id="app" class="hidden">
+  <nav class="sidebar">
+    <div class="sidebar-logo">₪</div>
+    <div class="nav-links">
+      <a class="nav-item active" data-view="dashboard" onclick="showView('dashboard')">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+        דשבורד
+      </a>
+      <a class="nav-item" data-view="accounts" onclick="showView('accounts')">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+        חשבונות
+      </a>
+      <a class="nav-item" data-view="transactions" onclick="showView('transactions')">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+        עסקאות
+      </a>
+      <a class="nav-item" data-view="upload" onclick="showView('upload')">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>
+        טעינת נתונים
+      </a>
+      <a class="nav-item" data-view="agent" onclick="showView('agent')">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+        סוכן AI
+      </a>
+    </div>
+    <div class="sidebar-bottom">
+      <a class="nav-item" onclick="openWizard()">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/></svg>
+        הגדרות פרופיל
+      </a>
+    </div>
+  </nav>
+
+  <main class="main-content">
+    <!-- DASHBOARD VIEW -->
+    <div id="view-dashboard" class="view active">
+      <div class="view-header">
+        <div>
+          <h1 id="dashboard-greeting">דשבורד פיננסי</h1>
+          <p class="subtitle" id="dashboard-date"></p>
+        </div>
+        <div class="header-actions">
+          <button class="btn-secondary small" onclick="showView('upload')">+ טען נתונים</button>
+          <button class="btn-primary small" onclick="showView('agent')">שאל את הסוכן ↗</button>
+        </div>
+      </div>
+
+      <div class="metrics-grid" id="metrics-grid">
+        <div class="metric-card">
+          <div class="metric-label">סה"כ נכסים</div>
+          <div class="metric-value green" id="m-assets">₪ —</div>
+          <div class="metric-sub">עו"ש + חיסכון + פנסיה + השקעות</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">סה"כ התחייבויות</div>
+          <div class="metric-value red" id="m-liab">₪ —</div>
+          <div class="metric-sub">הלוואות + חוב אשראי</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">הון עצמי נטו</div>
+          <div class="metric-value" id="m-net">₪ —</div>
+          <div class="metric-sub">נכסים פחות התחייבויות</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">הכנסה חודשית נטו</div>
+          <div class="metric-value blue" id="m-income">₪ —</div>
+          <div class="metric-sub">סה"כ כל בני משק הבית</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">החזרי הלוואות חודשי</div>
+          <div class="metric-value orange" id="m-loans">₪ —</div>
+          <div class="metric-sub">סה"כ החזרים קבועים</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">חיסכון חודשי</div>
+          <div class="metric-value" id="m-saving">₪ —</div>
+          <div class="metric-sub">הפקדות חודשיות לחיסכון</div>
+        </div>
+      </div>
+
+      <div class="dashboard-grid">
+        <div class="card">
+          <div class="card-header"><h3>חשבונות בנק</h3></div>
+          <div id="dash-banks" class="account-list"></div>
+        </div>
+        <div class="card">
+          <div class="card-header"><h3>כרטיסי אשראי</h3></div>
+          <div id="dash-cc" class="account-list"></div>
+        </div>
+        <div class="card">
+          <div class="card-header"><h3>חיסכון, גמל ופנסיה</h3></div>
+          <div id="dash-savings" class="account-list"></div>
+        </div>
+        <div class="card">
+          <div class="card-header"><h3>הלוואות פעילות</h3></div>
+          <div id="dash-loans" class="account-list"></div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:1rem">
+        <div class="card-header"><h3>התפלגות הון</h3></div>
+        <div style="display:flex;gap:2rem;align-items:center;padding:1rem 0;flex-wrap:wrap">
+          <canvas id="chart-pie" width="200" height="200" style="max-width:200px"></canvas>
+          <div id="chart-legend" style="flex:1;display:flex;flex-direction:column;gap:8px"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ACCOUNTS VIEW -->
+    <div id="view-accounts" class="view">
+      <div class="view-header"><h1>כל החשבונות</h1></div>
+      <div id="accounts-full"></div>
+    </div>
+
+    <!-- TRANSACTIONS VIEW -->
+    <div id="view-transactions" class="view">
+      <div class="view-header">
+        <h1>עסקאות</h1>
+        <div class="header-actions">
+          <select id="tx-filter-account" onchange="filterTransactions()" style="padding:6px 10px;border-radius:6px;border:1px solid #ddd;font-size:13px">
+            <option value="">כל החשבונות</option>
+          </select>
+          <input type="text" id="tx-search" onkeyup="filterTransactions()" placeholder="חיפוש..." style="padding:6px 10px;border-radius:6px;border:1px solid #ddd;font-size:13px;width:160px">
+        </div>
+      </div>
+      <div class="card">
+        <table class="tx-table" id="tx-table">
+          <thead>
+            <tr>
+              <th>תאריך</th>
+              <th>תיאור</th>
+              <th>חשבון</th>
+              <th>סכום</th>
+              <th>יתרה</th>
+            </tr>
+          </thead>
+          <tbody id="tx-body"></tbody>
+        </table>
+        <div id="tx-empty" class="empty-state" style="display:none">
+          <p>אין עסקאות — טען קובץ CSV מהבנק בלשונית "טעינת נתונים"</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- UPLOAD VIEW -->
+    <div id="view-upload" class="view">
+      <div class="view-header"><h1>טעינת נתונים</h1></div>
+      <div class="card">
+        <h3 style="margin-bottom:1rem">העלאת קובץ מהבנק / כרטיס אשראי</h3>
+        <div class="field">
+          <label>שם החשבון (לזיהוי)</label>
+          <input type="text" id="upload-account-name" placeholder='לדוגמא: עו"ש פועלים, ויזה כאל...' style="max-width:360px">
+        </div>
+        <div class="drop-zone" id="drop-zone" onclick="document.getElementById('file-input').click()">
+          <div class="drop-icon">↑</div>
+          <div class="drop-title">גרור קובץ לכאן או לחץ להעלאה</div>
+          <div class="drop-sub">CSV, Excel, TXT — ייצוא מהבנק / חברת אשראי</div>
+        </div>
+        <input type="file" id="file-input" accept=".csv,.txt,.xlsx,.xls" style="display:none" onchange="handleUpload(event)">
+        <div id="upload-status" style="margin-top:1rem"></div>
+      </div>
+
+      <div class="card" style="margin-top:1rem">
+        <h3 style="margin-bottom:1rem">איך לייצא מכל בנק</h3>
+        <div class="export-guide">
+          <div class="bank-guide"><strong>בנק הפועלים</strong><br>כניסה לחשבון ← העברות ותנועות ← ייצוא לאקסל</div>
+          <div class="bank-guide"><strong>בנק לאומי</strong><br>ניהול חשבון ← תנועות בחשבון ← ייצוא ל-CSV</div>
+          <div class="bank-guide"><strong>בנק דיסקונט</strong><br>חשבון עו"ש ← תנועות ← הורדת נתונים</div>
+          <div class="bank-guide"><strong>מזרחי טפחות</strong><br>מידע על החשבון ← תנועות ← ייצוא</div>
+          <div class="bank-guide"><strong>כאל</strong><br>כאל דיגיטל ← עסקאות ← ייצוא לאקסל</div>
+          <div class="bank-guide"><strong>ישראכרט / אמריקן אקספרס</strong><br>כרטיסים ← עסקאות ← ייצוא לאקסל</div>
+          <div class="bank-guide"><strong>מקס (לאומי קארד)</strong><br>פעילות כרטיס ← ייצוא נתונים</div>
+          <div class="bank-guide"><strong>פנסיה / גמל</strong><br>דוח שנתי / רבעוני PDF מחברת הביטוח</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- AGENT VIEW -->
+    <div id="view-agent" class="view">
+      <div class="view-header">
+        <div>
+          <h1>סוכן פיננסי AI</h1>
+          <p class="subtitle">מנתח את הנתונים שלך ועונה בעברית</p>
+        </div>
+        <div class="header-actions">
+          <input type="password" id="api-key-input" placeholder="Anthropic API Key (sk-ant-...)" style="width:260px;padding:6px 10px;border-radius:6px;border:1px solid #ddd;font-size:13px;direction:ltr">
+          <button class="btn-secondary small" onclick="saveApiKey()">שמור מפתח</button>
+        </div>
+      </div>
+
+      <div class="api-key-notice" id="api-key-notice">
+        <strong>נדרש API Key של Anthropic</strong> — 
+        <a href="https://console.anthropic.com" target="_blank">קבל מפתח חינמי בconsole.anthropic.com</a>
+        (כ-5$ קרדיט חינמי לחדשים). הזן אותו למעלה ולחץ "שמור מפתח".
+      </div>
+
+      <div class="chat-container">
+        <div class="chat-messages" id="chat-messages">
+          <div class="msg ai">
+            <div class="msg-who">סוכן פיננסי</div>
+            <div class="msg-bubble">שלום! אני הסוכן הפיננסי שלך. אני רואה את כל הנתונים שהגדרת בפרופיל ואת העסקאות שהעלית. שאל אותי כל שאלה.</div>
+          </div>
+        </div>
+
+        <div class="quick-questions">
+          <button class="quick-btn" onclick="quickAsk('תעשה לי סיכום מצב פיננסי מלא — נכסים, התחייבויות, תזרים חודשי ומה המצב הכולל')">סיכום מצב פיננסי</button>
+          <button class="quick-btn" onclick="quickAsk('למה אני לא מצליח לסגור את החודש ללא גירעון? תנתח את ההכנסות וההוצאות שלי')">ניתוח גירעון חודשי</button>
+          <button class="quick-btn" onclick="quickAsk('אני רוצה לבצע שיפוץ בעלות 80,000 ש״ח. מה עדיף — למשוך מחיסכון, לקחת הלוואה, או פתרון משולב?')">שיפוץ: חיסכון או הלוואה?</button>
+          <button class="quick-btn" onclick="quickAsk('תנתח את יחס החוב להכנסה שלי ותגיד לי אם אני בסיכון פיננסי')">ניתוח יחס חוב / הכנסה</button>
+          <button class="quick-btn" onclick="quickAsk('תמליץ לי על חלוקת ההשקעות האידיאלית בהתאם לגיל ולמצב שלי')">המלצה על השקעות</button>
+          <button class="quick-btn" onclick="quickAsk('כמה זמן ייקח לי לבנות קרן חירום של 6 משכורות בקצב החיסכון הנוכחי?')">קרן חירום</button>
+        </div>
+
+        <div class="chat-input-area">
+          <textarea id="chat-input" placeholder="שאל שאלה פיננסית..." dir="rtl" rows="2" onkeydown="handleChatKey(event)"></textarea>
+          <button class="btn-primary" id="send-btn" onclick="sendMessage()">שלח</button>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="/js/app.js"></script>
+</body>
+</html>
