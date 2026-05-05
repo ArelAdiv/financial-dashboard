@@ -51,7 +51,7 @@
       <button class="btn-secondary small" onclick="updateMemberForms()" style="margin-bottom:1.25rem">עדכן</button>
 
       <div id="adults-section">
-        <div style="font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:#888;margin-bottom:8px">בעלי משק בית — הכנסות</div>
+        <div style="font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:#888;margin-bottom:8px">בעלי משק בית</div>
         <div id="adults-container"></div>
       </div>
 
@@ -97,27 +97,7 @@
     <!-- Step 5: Savings & investments -->
     <div class="wizard-step" id="step-5">
       <h2>חיסכון, השקעות ופנסיה</h2>
-      <div id="savings-container">
-        <div class="account-form">
-          <div class="field-grid">
-            <div class="field">
-              <label>סוג</label>
-              <select class="s-type">
-                <option value="pension">קרן פנסיה</option>
-                <option value="gemel">קופת גמל</option>
-                <option value="hishtalmut">קרן השתלמות</option>
-                <option value="saving">חיסכון</option>
-                <option value="stocks">תיק השקעות / מניות</option>
-                <option value="crypto">קריפטו</option>
-                <option value="real-estate">נדל"ן</option>
-                <option value="other">אחר</option>
-              </select>
-            </div>
-            <div class="field"><label>שם / חברה</label><input type="text" class="s-name" placeholder="לדוגמא: מנורה מבטחים"></div>
-            <div class="field"><label>הפקדה חודשית (₪)</label><input type="number" class="s-monthly" placeholder="0"></div>
-          </div>
-        </div>
-      </div>
+      <div id="savings-container"></div>
       <button class="btn-secondary small" onclick="addSavingsRow()">+ הוסף חיסכון/השקעה</button>
 
       <div class="field" style="margin-top:1.5rem">
@@ -199,19 +179,19 @@
           <div class="metric-sub">נכסים פחות התחייבויות</div>
         </div>
         <div class="metric-card">
-          <div class="metric-label">הכנסה חודשית נטו</div>
+          <div class="metric-label">הכנסה חודשית</div>
           <div class="metric-value blue" id="m-income">₪ —</div>
-          <div class="metric-sub">סה"כ כל בני משק הבית</div>
+          <div class="metric-sub">לפי עסקאות חודש נוכחי</div>
         </div>
         <div class="metric-card">
-          <div class="metric-label">החזרי הלוואות חודשי</div>
+          <div class="metric-label">הוצאות חודשיות</div>
           <div class="metric-value orange" id="m-loans">₪ —</div>
-          <div class="metric-sub">סה"כ החזרים קבועים</div>
+          <div class="metric-sub">לפי עסקאות חודש נוכחי</div>
         </div>
         <div class="metric-card">
           <div class="metric-label">חיסכון חודשי</div>
           <div class="metric-value" id="m-saving">₪ —</div>
-          <div class="metric-sub">הפקדות חודשיות לחיסכון</div>
+          <div class="metric-sub">הפרש הכנסות-הוצאות</div>
         </div>
       </div>
 
@@ -291,9 +271,9 @@
         <div class="drop-zone" id="drop-zone" onclick="document.getElementById('file-input').click()">
           <div class="drop-icon">↑</div>
           <div class="drop-title">גרור קובץ לכאן או לחץ להעלאה</div>
-          <div class="drop-sub">CSV, Excel, TXT — ייצוא מהבנק / חברת אשראי</div>
+          <div class="drop-sub">CSV, Excel, TXT, PDF — ייצוא מהבנק / חברת אשראי</div>
         </div>
-        <input type="file" id="file-input" accept=".csv,.txt,.xlsx,.xls" style="display:none" onchange="handleUpload(event)">
+        <input type="file" id="file-input" accept=".csv,.txt,.xlsx,.xls,.pdf" style="display:none" onchange="handleUpload(event)">
         <div id="upload-status" style="margin-top:1rem"></div>
       </div>
 
