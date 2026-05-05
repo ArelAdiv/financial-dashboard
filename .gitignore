@@ -1,3 +1,4 @@
+node_modules/
 db/transactions.sqlite
 data/profile.json
 uploads/
