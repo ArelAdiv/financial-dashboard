@@ -350,3 +350,27 @@ body {
 /* UPLOAD STATUS */
 .upload-success { background: var(--green-bg); border: 1px solid #bbf7d0; border-radius: 7px; padding: 10px 14px; font-size: 13px; color: var(--green); }
 .upload-error { background: var(--red-bg); border: 1px solid #fecaca; border-radius: 7px; padding: 10px 14px; font-size: 13px; color: var(--red); }
+.upload-warning { background: #fff7ed; border: 1px solid #fed7aa; border-radius: 7px; padding: 10px 14px; font-size: 13px; color: var(--orange); }
+
+/* VALIDATION */
+.error-field { border-color: var(--red) !important; }
+.field-error { font-size: 11px; color: var(--red); margin-top: 3px; }
+.req { color: var(--red); font-size: 11px; }
+
+/* CHECKBOXES */
+.usage-checkboxes {
+  display: flex; flex-wrap: wrap; gap: 8px;
+  padding: 8px 0;
+}
+.checkbox-label {
+  display: flex; align-items: center; gap: 5px;
+  font-size: 13px; color: var(--text); cursor: pointer;
+  padding: 4px 10px;
+  border: 1px solid var(--border); border-radius: 20px;
+  transition: all 0.12s;
+}
+.checkbox-label:hover { border-color: var(--accent); background: var(--bg); }
+.checkbox-label input[type="checkbox"] { width: auto; margin: 0; cursor: pointer; }
+
+/* CUSTOM TYPE WRAP */
+.custom-type-wrap label { font-size: 11px; font-weight: 500; color: var(--text-secondary); display: block; margin-bottom: 4px; }

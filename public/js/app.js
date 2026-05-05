@@ -1,6 +1,5 @@
 'use strict';
 
-// ── State ──────────────────────────────────────────────────────
 let profile = null;
 let transactions = [];
 let chatHistory = [];
@@ -8,11 +7,10 @@ let currentStep = 1;
 const TOTAL_STEPS = 5;
 let pieChart = null;
 
-// ── Init ──────────────────────────────────────────────────────
+// ── Init ──────────────────────────────────────────────────────────────────────
 window.addEventListener('DOMContentLoaded', async () => {
-  const today = new Date();
   document.getElementById('dashboard-date').textContent =
-    today.toLocaleDateString('he-IL', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+    new Date().toLocaleDateString('he-IL', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
 
   profile = await fetch('/api/profile').then(r => r.json());
   transactions = await fetch('/api/transactions').then(r => r.json());
@@ -29,7 +27,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   loadApiKey();
 });
 
-// ── Overlay / App toggle ───────────────────────────────────────
+// ── Overlay / App toggle ──────────────────────────────────────────────────────
 function showOverlay() {
   document.getElementById('wizard-overlay').classList.remove('hidden');
   document.getElementById('app').classList.add('hidden');
@@ -39,11 +37,12 @@ function showApp() {
   document.getElementById('app').classList.remove('hidden');
 }
 function openWizard() {
-  if (profile) populateWizardFromProfile();
+  if (profile && profile.members) populateWizardFromProfile();
+  else initWizard();
   showOverlay();
 }
 
-// ── Views ──────────────────────────────────────────────────────
+// ── Views ─────────────────────────────────────────────────────────────────────
 function showView(name) {
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
@@ -53,7 +52,7 @@ function showView(name) {
   if (name === 'accounts') renderAccountsFull();
 }
 
-// ── Wizard ─────────────────────────────────────────────────────
+// ── Wizard ────────────────────────────────────────────────────────────────────
 function initWizard() {
   currentStep = 1;
   updateWizardUI();
@@ -61,7 +60,9 @@ function initWizard() {
   updateBankForms();
   updateCCForms();
   updateLoanForms();
-  updateSavings();
+  const c = document.getElementById('savings-container');
+  c.innerHTML = '';
+  c.appendChild(makeSavingsRow(0));
 }
 
 function updateWizardUI() {
@@ -79,10 +80,8 @@ function updateWizardUI() {
 }
 
 function nextStep() {
-  if (currentStep === TOTAL_STEPS) {
-    saveWizard();
-    return;
-  }
+  if (!validateStep(currentStep)) return;
+  if (currentStep === TOTAL_STEPS) { saveWizard(); return; }
   currentStep++;
   updateWizardUI();
   if (currentStep === 2) updateBankForms();
@@ -92,34 +91,108 @@ function nextStep() {
 
 function prevStep() {
   if (currentStep === 1) return;
+  clearErrors();
   currentStep--;
   updateWizardUI();
 }
 
+// ── Step Validation ───────────────────────────────────────────────────────────
+function validateStep(step) {
+  clearErrors();
+  let valid = true;
+
+  if (step === 1) {
+    const statusEl = document.getElementById('w-status');
+    const adultsEl = document.getElementById('w-adults');
+    if (!statusEl.value) { showError(statusEl, 'שדה חובה'); valid = false; }
+    const adultsCount = parseInt(adultsEl.value);
+    if (!adultsCount || adultsCount < 1) { showError(adultsEl, 'נדרש לפחות בעל משק בית אחד'); valid = false; }
+    document.querySelectorAll('.adult-row').forEach(row => {
+      const nameEl = row.querySelector('.m-name');
+      const ageEl = row.querySelector('.m-age');
+      if (!nameEl.value.trim()) { showError(nameEl, 'שם חובה'); valid = false; }
+      const age = parseInt(ageEl.value);
+      if (!ageEl.value || age < 18 || age > 120) { showError(ageEl, 'גיל חובה (18–120)'); valid = false; }
+    });
+  }
+
+  if (step === 2) {
+    document.querySelectorAll('#banks-container .account-form').forEach(form => {
+      const bankEl = form.querySelector('.b-bank');
+      if (!bankEl.value) { showError(bankEl, 'נדרש לבחור בנק'); valid = false; }
+      const checked = form.querySelectorAll('.b-usage:checked');
+      if (!checked.length) {
+        const container = form.querySelector('.usage-checkboxes');
+        showError(container, 'נדרש לסמן לפחות אופן שימוש אחד');
+        valid = false;
+      }
+    });
+  }
+
+  if (step === 3) {
+    document.querySelectorAll('#cc-container .account-form').forEach(form => {
+      const el = form.querySelector('.cc-company');
+      if (!el.value) { showError(el, 'נדרש לבחור חברת אשראי'); valid = false; }
+    });
+  }
+
+  if (step === 4) {
+    document.querySelectorAll('#loans-container .account-form').forEach(form => {
+      const el = form.querySelector('.l-type');
+      if (!el.value) { showError(el, 'נדרש לבחור סוג הלוואה'); valid = false; }
+    });
+  }
+
+  if (step === 5) {
+    document.querySelectorAll('#savings-container .account-form').forEach(form => {
+      const typeEl = form.querySelector('.s-type');
+      const nameEl = form.querySelector('.s-name');
+      if (!typeEl.value) { showError(typeEl, 'נדרש לבחור סוג'); valid = false; }
+      if (!nameEl.value.trim()) { showError(nameEl, 'שם/חברה חובה'); valid = false; }
+      if (typeEl.value === 'other') {
+        const customEl = form.querySelector('.s-custom-type');
+        if (customEl && !customEl.value.trim()) { showError(customEl, 'נדרש לפרט את הסוג'); valid = false; }
+      }
+    });
+  }
+
+  return valid;
+}
+
+function showError(el, msg) {
+  if (!el) return;
+  el.classList.add('error-field');
+  const errDiv = document.createElement('div');
+  errDiv.className = 'field-error';
+  errDiv.textContent = msg;
+  el.parentNode.appendChild(errDiv);
+}
+
+function clearErrors() {
+  document.querySelectorAll('.error-field').forEach(el => el.classList.remove('error-field'));
+  document.querySelectorAll('.field-error').forEach(el => el.remove());
+}
+
+// ── Member forms ──────────────────────────────────────────────────────────────
 function updateMemberForms() {
   const adults = parseInt(document.getElementById('w-adults').value) || 1;
   const children = parseInt(document.getElementById('w-children').value) || 0;
 
-  // Adults with income fields
   const ac = document.getElementById('adults-container');
   while (ac.children.length > adults) ac.lastElementChild.remove();
   while (ac.children.length < adults) {
     const i = ac.children.length;
     const div = document.createElement('div');
     div.className = 'member-row adult-row';
-    div.dataset.index = i;
     div.innerHTML =
-      '<div class="member-title">בעל/ת משק בית #' + (i+1) + (i===0?' (אתה/את)':'') + '</div>' +
+      '<div class="member-title">בעל/ת משק בית #' + (i + 1) + (i === 0 ? ' (אתה/את)' : '') + '</div>' +
       '<div class="field-grid">' +
-      '<div class="field"><label>שם</label><input type="text" class="m-name" placeholder="שם פרטי"></div>' +
-      '<div class="field"><label>גיל</label><input type="number" class="m-age" min="0" max="120" placeholder="גיל"></div>' +
-      '<div class="field"><label>הכנסה חודשית ברוטו (₪)</label><input type="number" class="m-income" min="0" placeholder="0"></div>' +
-      '<div class="field"><label>הכנסה נטו (₪)</label><input type="number" class="m-net-income" min="0" placeholder="0"></div>' +
+      '<div class="field"><label>שם <span class="req">*</span></label><input type="text" class="m-name" placeholder="שם פרטי"></div>' +
+      '<div class="field"><label>גיל <span class="req">*</span></label><input type="number" class="m-age" min="18" max="120" placeholder="גיל"></div>' +
       '</div>';
     ac.appendChild(div);
   }
 
-  // Children - name and age only, no income
   const cc2 = document.getElementById('children-container');
   document.getElementById('children-section').style.display = children > 0 ? '' : 'none';
   while (cc2.children.length > children) cc2.lastElementChild.remove();
@@ -128,31 +201,43 @@ function updateMemberForms() {
     const div = document.createElement('div');
     div.className = 'member-row child-row';
     div.innerHTML =
-      '<div class="member-title">ילד/ה #' + (i+1) + '</div>' +
+      '<div class="member-title">ילד/ה #' + (i + 1) + '</div>' +
       '<div class="field-grid">' +
       '<div class="field"><label>שם</label><input type="text" class="m-name" placeholder="שם פרטי"></div>' +
-      '<div class="field"><label>גיל</label><input type="number" class="m-age" min="0" max="30" placeholder="גיל"></div>' +
+      '<div class="field"><label>גיל</label><input type="number" class="m-age" min="0" max="17" placeholder="גיל"></div>' +
       '</div>';
     cc2.appendChild(div);
   }
 }
 
+// ── Bank forms ────────────────────────────────────────────────────────────────
 function makeBankForm(i) {
   const div = document.createElement('div');
   div.className = 'account-form';
   div.innerHTML =
-    '<div class="member-title">חשבון #' + (i+1) + '</div>' +
+    '<div class="member-title">חשבון #' + (i + 1) + '</div>' +
     '<div class="field-grid">' +
-    '<div class="field"><label>בנק</label><select class="b-bank">' +
+    '<div class="field"><label>בנק <span class="req">*</span></label>' +
+    '<select class="b-bank">' +
+    '<option value="">-- בחר --</option>' +
     '<option>פועלים</option><option>לאומי</option><option>דיסקונט</option>' +
     '<option>מזרחי טפחות</option><option>הבינלאומי</option><option>אוצר החייל</option>' +
     '<option>יהב</option><option>ONE ZERO</option><option>אחר</option>' +
     '</select></div>' +
-    '<div class="field"><label>סוג חשבון</label><select class="b-type">' +
-    '<option value="checking">עו"ש</option><option value="deposit">פיקדון</option><option value="savings">חיסכון</option>' +
-    '</select></div>' +
-    '<div class="field"><label>שם בעל החשבון (אם שונה)</label><input type="text" class="b-owner" placeholder="אופציונלי"></div>' +
-    '</div>';
+    '<div class="field"><label>שם בעל החשבון (אם שונה)</label>' +
+    '<input type="text" class="b-owner" placeholder="אופציונלי"></div>' +
+    '</div>' +
+    '<div class="field">' +
+    '<label>אופן שימוש <span class="req">*</span></label>' +
+    '<div class="usage-checkboxes">' +
+    '<label class="checkbox-label"><input type="checkbox" class="b-usage" value="checking"> עו"ש</label>' +
+    '<label class="checkbox-label"><input type="checkbox" class="b-usage" value="saving"> חיסכון</label>' +
+    '<label class="checkbox-label"><input type="checkbox" class="b-usage" value="deposit"> פיקדון</label>' +
+    '<label class="checkbox-label"><input type="checkbox" class="b-usage" value="mortgage"> משכנתא</label>' +
+    '<label class="checkbox-label"><input type="checkbox" class="b-usage" value="loans"> הלוואות</label>' +
+    '<label class="checkbox-label"><input type="checkbox" class="b-usage" value="investments"> השקעות</label>' +
+    '<label class="checkbox-label"><input type="checkbox" class="b-usage" value="business"> עסקי</label>' +
+    '</div></div>';
   return div;
 }
 
@@ -163,17 +248,23 @@ function updateBankForms() {
   while (c.children.length < count) c.appendChild(makeBankForm(c.children.length));
 }
 
+// ── Credit card forms ─────────────────────────────────────────────────────────
 function makeCCForm(i) {
   const div = document.createElement('div');
   div.className = 'account-form';
   div.innerHTML =
-    '<div class="member-title">כרטיס #' + (i+1) + '</div>' +
+    '<div class="member-title">כרטיס #' + (i + 1) + '</div>' +
     '<div class="field-grid">' +
-    '<div class="field"><label>חברת אשראי</label><select class="cc-company">' +
-    '<option>ויזה כאל</option><option>ישראכרט</option><option>מקס</option><option>אמריקן אקספרס</option><option>אחר</option>' +
+    '<div class="field"><label>חברת אשראי <span class="req">*</span></label>' +
+    '<select class="cc-company">' +
+    '<option value="">-- בחר --</option>' +
+    '<option>ויזה כאל</option><option>ישראכרט</option><option>מקס</option>' +
+    '<option>אמריקן אקספרס</option><option>אחר</option>' +
     '</select></div>' +
-    '<div class="field"><label>שם בעל הכרטיס</label><input type="text" class="cc-owner" placeholder="אופציונלי"></div>' +
-    '<div class="field"><label>יום חיוב בחודש</label><input type="number" class="cc-day" min="1" max="31" placeholder="10"></div>' +
+    '<div class="field"><label>שם בעל הכרטיס (אם שונה)</label>' +
+    '<input type="text" class="cc-owner" placeholder="אופציונלי"></div>' +
+    '<div class="field"><label>יום חיוב בחודש</label>' +
+    '<input type="number" class="cc-day" min="1" max="31" placeholder="10"></div>' +
     '</div>';
   return div;
 }
@@ -185,18 +276,23 @@ function updateCCForms() {
   while (c.children.length < count) c.appendChild(makeCCForm(c.children.length));
 }
 
+// ── Loan forms ────────────────────────────────────────────────────────────────
 function makeLoanForm(i) {
   const div = document.createElement('div');
   div.className = 'account-form';
   div.innerHTML =
-    '<div class="member-title">הלוואה #' + (i+1) + '</div>' +
+    '<div class="member-title">הלוואה #' + (i + 1) + '</div>' +
     '<div class="field-grid">' +
-    '<div class="field"><label>סוג הלוואה</label><select class="l-type">' +
+    '<div class="field"><label>סוג הלוואה <span class="req">*</span></label>' +
+    '<select class="l-type">' +
+    '<option value="">-- בחר --</option>' +
     '<option>הלוואת בנק</option><option>משכנתא</option><option>הלוואת רכב</option>' +
     '<option>הלוואת חברת אשראי</option><option>הלוואה ממעביד</option><option>אחר</option>' +
     '</select></div>' +
-    '<div class="field"><label>מטרת ההלוואה</label><input type="text" class="l-purpose" placeholder="לדוגמא: רכב, שיפוץ..."></div>' +
-    '<div class="field"><label>איפה ההלוואה (בנק / חברה)</label><input type="text" class="l-lender" placeholder="לדוגמא: בנק פועלים"></div>' +
+    '<div class="field"><label>מטרת ההלוואה</label>' +
+    '<input type="text" class="l-purpose" placeholder="לדוגמא: רכב, שיפוץ..."></div>' +
+    '<div class="field"><label>איפה ההלוואה (בנק / חברה)</label>' +
+    '<input type="text" class="l-lender" placeholder="לדוגמא: בנק פועלים"></div>' +
     '</div>';
   return div;
 }
@@ -208,78 +304,95 @@ function updateLoanForms() {
   while (c.children.length < count) c.appendChild(makeLoanForm(c.children.length));
 }
 
-function addSavingsRow() {
-  const c = document.getElementById('savings-container');
-  const i = c.children.length;
+// ── Savings forms ─────────────────────────────────────────────────────────────
+function makeSavingsRow(i) {
   const div = document.createElement('div');
   div.className = 'account-form';
-  div.innerHTML = `
-    <div class="field-grid">
-      <div class="field"><label>סוג</label>
-        <select class="s-type">
-          <option value="pension">קרן פנסיה</option><option value="gemel">קופת גמל</option>
-          <option value="hishtalmut">קרן השתלמות</option><option value="saving">חיסכון</option>
-          <option value="stocks">תיק השקעות</option><option value="crypto">קריפטו</option>
-          <option value="real-estate">נדל"ן</option><option value="other">אחר</option>
-        </select></div>
-      <div class="field"><label>שם / חברה</label><input type="text" class="s-name" placeholder="לדוגמא: מנורה מבטחים"></div>
-      <div class="field"><label>יתרה (₪)</label><input type="number" class="s-balance" placeholder="0"></div>
-      <div class="field"><label>הפקדה חודשית (₪)</label><input type="number" class="s-monthly" placeholder="0"></div>
-    </div>`;
-  c.appendChild(div);
+  div.innerHTML =
+    '<div class="field-grid">' +
+    '<div class="field"><label>סוג <span class="req">*</span></label>' +
+    '<select class="s-type" onchange="toggleCustomType(this)">' +
+    '<option value="">-- בחר --</option>' +
+    '<option value="pension">קרן פנסיה</option>' +
+    '<option value="gemel">קופת גמל</option>' +
+    '<option value="hishtalmut">קרן השתלמות</option>' +
+    '<option value="saving">חיסכון</option>' +
+    '<option value="stocks">תיק השקעות / מניות</option>' +
+    '<option value="crypto">קריפטו</option>' +
+    '<option value="real-estate">נדל"ן</option>' +
+    '<option value="other">אחר</option>' +
+    '</select>' +
+    '<div class="custom-type-wrap" style="display:none;margin-top:6px">' +
+    '<label>פרט סוג: <span class="req">*</span></label>' +
+    '<input type="text" class="s-custom-type" placeholder="תיאור הסוג">' +
+    '</div></div>' +
+    '<div class="field"><label>שם / חברה <span class="req">*</span></label>' +
+    '<input type="text" class="s-name" placeholder="לדוגמא: מנורה מבטחים"></div>' +
+    '<div class="field"><label>עבור מה? (אופציונלי)</label>' +
+    '<input type="text" class="s-goal" placeholder="מטרת החיסכון / שם החיסכון"></div>' +
+    '</div>';
+  return div;
 }
 
-function updateSavings() {} // first row already in HTML
+function toggleCustomType(select) {
+  const wrap = select.parentNode.querySelector('.custom-type-wrap');
+  if (wrap) wrap.style.display = select.value === 'other' ? 'block' : 'none';
+}
 
+function addSavingsRow() {
+  const c = document.getElementById('savings-container');
+  c.appendChild(makeSavingsRow(c.children.length));
+}
+
+// ── Collect & Save wizard ─────────────────────────────────────────────────────
 function collectWizardData() {
   const adults = Array.from(document.querySelectorAll('.adult-row')).map(r => ({
-    name: r.querySelector('.m-name')?.value || '',
+    name: r.querySelector('.m-name')?.value.trim() || '',
     age: parseInt(r.querySelector('.m-age')?.value) || 0,
-    income: parseFloat(r.querySelector('.m-income')?.value) || 0,
-    netIncome: parseFloat(r.querySelector('.m-net-income')?.value) || 0,
     isAdult: true
   }));
   const children = Array.from(document.querySelectorAll('.child-row')).map(r => ({
-    name: r.querySelector('.m-name')?.value || '',
+    name: r.querySelector('.m-name')?.value.trim() || '',
     age: parseInt(r.querySelector('.m-age')?.value) || 0,
-    income: 0, netIncome: 0, isAdult: false
+    isAdult: false
   }));
-  const members = [...adults, ...children];
 
   const banks = Array.from(document.querySelectorAll('#banks-container .account-form')).map(r => ({
     bank: r.querySelector('.b-bank')?.value || '',
-    type: r.querySelector('.b-type')?.value || 'checking',
-    owner: r.querySelector('.b-owner')?.value || '',
-    balance: 0, creditLine: 0
+    usage: Array.from(r.querySelectorAll('.b-usage:checked')).map(cb => cb.value),
+    owner: r.querySelector('.b-owner')?.value.trim() || ''
   }));
 
   const creditCards = Array.from(document.querySelectorAll('#cc-container .account-form')).map(r => ({
     company: r.querySelector('.cc-company')?.value || '',
-    owner: r.querySelector('.cc-owner')?.value || '',
-    day: parseInt(r.querySelector('.cc-day')?.value) || 10,
-    monthly: 0, limit: 0
+    owner: r.querySelector('.cc-owner')?.value.trim() || '',
+    day: parseInt(r.querySelector('.cc-day')?.value) || null
   }));
 
   const loans = Array.from(document.querySelectorAll('#loans-container .account-form')).map(r => ({
     type: r.querySelector('.l-type')?.value || '',
-    purpose: r.querySelector('.l-purpose')?.value || '',
-    lender: r.querySelector('.l-lender')?.value || '',
-    balance: 0, monthly: 0, rate: 0, remaining: 0
+    purpose: r.querySelector('.l-purpose')?.value.trim() || '',
+    lender: r.querySelector('.l-lender')?.value.trim() || ''
   }));
 
-  const savings = Array.from(document.querySelectorAll('#savings-container .account-form')).map(r => ({
-    type: r.querySelector('.s-type')?.value || '',
-    name: r.querySelector('.s-name')?.value || '',
-    monthly: parseFloat(r.querySelector('.s-monthly')?.value) || 0,
-    balance: 0
-  }));
+  const savings = Array.from(document.querySelectorAll('#savings-container .account-form')).map(r => {
+    const type = r.querySelector('.s-type')?.value || '';
+    return {
+      type,
+      customType: type === 'other' ? (r.querySelector('.s-custom-type')?.value.trim() || null) : null,
+      name: r.querySelector('.s-name')?.value.trim() || '',
+      goal: r.querySelector('.s-goal')?.value.trim() || ''
+    };
+  });
 
+  const adultsCount = parseInt(document.getElementById('w-adults').value) || 1;
+  const childrenCount = parseInt(document.getElementById('w-children').value) || 0;
   return {
-    adultsCount: parseInt(document.getElementById('w-adults').value) || 1,
-    childrenCount: parseInt(document.getElementById('w-children').value) || 0,
-    householdSize: (parseInt(document.getElementById('w-adults').value)||1) + (parseInt(document.getElementById('w-children').value)||0),
     maritalStatus: document.getElementById('w-status').value,
-    members,
+    adultsCount,
+    childrenCount,
+    householdSize: adultsCount + childrenCount,
+    members: [...adults, ...children],
     banks,
     creditCards,
     loans,
@@ -305,21 +418,81 @@ function populateWizardFromProfile() {
   document.getElementById('w-cc-count').value = profile.creditCards?.length || 0;
   document.getElementById('w-loan-count').value = profile.loans?.length || 0;
   document.getElementById('w-goals').value = profile.goals || '';
+
+  currentStep = 1;
+  updateWizardUI();
+
   setTimeout(() => {
     updateMemberForms();
-    (profile.members || []).forEach((m, i) => {
-      const rows = document.querySelectorAll('.member-row');
-      if (rows[i]) {
-        rows[i].querySelector('.m-name').value = m.name || '';
-        rows[i].querySelector('.m-age').value = m.age || '';
-        rows[i].querySelector('.m-income').value = m.income || '';
-        rows[i].querySelector('.m-net-income').value = m.netIncome || '';
+    updateBankForms();
+    updateCCForms();
+    updateLoanForms();
+
+    // Rebuild savings rows from profile
+    const sc = document.getElementById('savings-container');
+    sc.innerHTML = '';
+    const savCount = (profile.savings || []).length || 1;
+    for (let i = 0; i < savCount; i++) sc.appendChild(makeSavingsRow(i));
+
+    // Fill members
+    const adults = (profile.members || []).filter(m => m.isAdult !== false);
+    const children = (profile.members || []).filter(m => m.isAdult === false);
+    document.querySelectorAll('.adult-row').forEach((row, i) => {
+      if (adults[i]) {
+        row.querySelector('.m-name').value = adults[i].name || '';
+        row.querySelector('.m-age').value = adults[i].age || '';
       }
+    });
+    document.querySelectorAll('.child-row').forEach((row, i) => {
+      if (children[i]) {
+        row.querySelector('.m-name').value = children[i].name || '';
+        row.querySelector('.m-age').value = children[i].age || '';
+      }
+    });
+
+    // Fill banks
+    document.querySelectorAll('#banks-container .account-form').forEach((form, i) => {
+      const b = (profile.banks || [])[i];
+      if (!b) return;
+      form.querySelector('.b-bank').value = b.bank || '';
+      form.querySelector('.b-owner').value = b.owner || '';
+      const usages = b.usage || [];
+      form.querySelectorAll('.b-usage').forEach(cb => { cb.checked = usages.includes(cb.value); });
+    });
+
+    // Fill credit cards
+    document.querySelectorAll('#cc-container .account-form').forEach((form, i) => {
+      const c = (profile.creditCards || [])[i];
+      if (!c) return;
+      form.querySelector('.cc-company').value = c.company || '';
+      form.querySelector('.cc-owner').value = c.owner || '';
+      form.querySelector('.cc-day').value = c.day || '';
+    });
+
+    // Fill loans
+    document.querySelectorAll('#loans-container .account-form').forEach((form, i) => {
+      const l = (profile.loans || [])[i];
+      if (!l) return;
+      form.querySelector('.l-type').value = l.type || '';
+      form.querySelector('.l-purpose').value = l.purpose || '';
+      form.querySelector('.l-lender').value = l.lender || '';
+    });
+
+    // Fill savings
+    document.querySelectorAll('#savings-container .account-form').forEach((form, i) => {
+      const s = (profile.savings || [])[i];
+      if (!s) return;
+      const typeEl = form.querySelector('.s-type');
+      typeEl.value = s.type || '';
+      toggleCustomType(typeEl);
+      if (s.type === 'other' && s.customType) form.querySelector('.s-custom-type').value = s.customType;
+      form.querySelector('.s-name').value = s.name || '';
+      form.querySelector('.s-goal').value = s.goal || '';
     });
   }, 50);
 }
 
-// ── Dashboard Render ────────────────────────────────────────────
+// ── Dashboard Render ──────────────────────────────────────────────────────────
 function fmt(n) {
   if (n === undefined || n === null || isNaN(n)) return '₪ —';
   return '₪ ' + Math.round(n).toLocaleString('he-IL');
@@ -328,53 +501,63 @@ function fmt(n) {
 function renderDashboard() {
   if (!profile) return;
 
-  // greeting
   const name = profile.members?.[0]?.name;
   document.getElementById('dashboard-greeting').textContent = name ? `שלום, ${name}` : 'דשבורד פיננסי';
 
-  // metrics
-  const bankAssets = (profile.banks || []).filter(b => b.balance > 0).reduce((s, b) => s + b.balance, 0);
-  const bankNeg = (profile.banks || []).filter(b => b.balance < 0).reduce((s, b) => s + Math.abs(b.balance), 0);
-  const savingsTotal = (profile.savings || []).reduce((s, b) => s + (b.balance || 0), 0);
-  const loanTotal = (profile.loans || []).reduce((s, l) => s + (l.balance || 0), 0);
-  const ccDebt = (profile.creditCards || []).reduce((s, c) => s + (c.monthly || 0), 0);
-  const totalAssets = bankAssets + savingsTotal;
-  const totalLiab = loanTotal + bankNeg;
+  // Metrics from transactions
+  const now = new Date();
+  const thisMonth = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
+
+  const lastBalanceByAccount = {};
+  let monthlyIncome = 0, monthlyExpenses = 0;
+
+  transactions.forEach(t => {
+    if (t.balance) lastBalanceByAccount[t.account] = t.balance;
+    const tMonth = (t.date || t.imported_at || '').substring(0, 7);
+    if (tMonth === thisMonth) {
+      if (t.amount > 0) monthlyIncome += t.amount;
+      else monthlyExpenses += Math.abs(t.amount);
+    }
+  });
+
+  const totalAssets = Object.values(lastBalanceByAccount).filter(b => b > 0).reduce((s, b) => s + b, 0);
+  const totalLiab = Object.values(lastBalanceByAccount).filter(b => b < 0).reduce((s, b) => s + Math.abs(b), 0);
   const netWorth = totalAssets - totalLiab;
-  const totalNetIncome = (profile.members || []).reduce((s, m) => s + (m.netIncome || 0), 0);
-  const loanMonthly = (profile.loans || []).reduce((s, l) => s + (l.monthly || 0), 0);
-  const savingsMonthly = (profile.savings || []).reduce((s, s2) => s + (s2.monthly || 0), 0);
+  const monthlySavings = monthlyIncome - monthlyExpenses;
 
-  document.getElementById('m-assets').textContent = fmt(totalAssets);
-  document.getElementById('m-liab').textContent = fmt(totalLiab);
-  document.getElementById('m-net').textContent = fmt(netWorth);
+  document.getElementById('m-assets').textContent = totalAssets ? fmt(totalAssets) : '₪ —';
+  document.getElementById('m-liab').textContent = totalLiab ? fmt(totalLiab) : '₪ —';
+  document.getElementById('m-net').textContent = (totalAssets || totalLiab) ? fmt(netWorth) : '₪ —';
   document.getElementById('m-net').className = 'metric-value ' + (netWorth >= 0 ? 'green' : 'red');
-  document.getElementById('m-income').textContent = fmt(totalNetIncome);
-  document.getElementById('m-loans').textContent = fmt(loanMonthly);
-  document.getElementById('m-saving').textContent = fmt(savingsMonthly);
+  document.getElementById('m-income').textContent = monthlyIncome ? fmt(monthlyIncome) : '₪ —';
+  document.getElementById('m-loans').textContent = monthlyExpenses ? fmt(monthlyExpenses) : '₪ —';
+  document.getElementById('m-saving').textContent = (monthlyIncome || monthlyExpenses) ? fmt(monthlySavings) : '₪ —';
 
-  // bank cards
   renderAccountSection('dash-banks', (profile.banks || []).map(b => ({
-    icon: '🏦', name: b.bank, type: typeLabel(b.type), balance: b.balance,
-    detail: b.creditLine ? `מסגרת: ${fmt(b.creditLine)}` : ''
+    icon: '🏦', name: b.bank,
+    type: (b.usage || []).map(usageLabel).join(', ') || 'חשבון בנק',
+    balance: lastBalanceByAccount[b.bank] ?? null,
+    detail: b.owner ? `בעל: ${b.owner}` : ''
   })));
 
   renderAccountSection('dash-cc', (profile.creditCards || []).map(c => ({
     icon: '💳', name: c.company, type: 'כרטיס אשראי',
-    balance: -c.monthly, detail: `חיוב חודשי | תקרה: ${fmt(c.limit)}`
+    balance: null, detail: c.day ? `יום חיוב: ${c.day}` : ''
   })));
 
   renderAccountSection('dash-savings', (profile.savings || []).map(s => ({
-    icon: savingsIcon(s.type), name: s.name || savingsLabel(s.type), type: savingsLabel(s.type),
-    balance: s.balance, detail: s.monthly ? `הפקדה חודשית: ${fmt(s.monthly)}` : ''
+    icon: savingsIcon(s.type),
+    name: s.name || savingsLabel(s.type),
+    type: s.type === 'other' ? (s.customType || 'אחר') : savingsLabel(s.type),
+    balance: null, detail: s.goal || ''
   })));
 
   renderAccountSection('dash-loans', (profile.loans || []).map(l => ({
     icon: '📋', name: l.type, type: l.purpose || 'הלוואה פעילה',
-    balance: -l.balance, detail: `החזר חודשי: ${fmt(l.monthly)} | ${l.remaining} תשלומים`
+    balance: null, detail: l.lender || ''
   })));
 
-  renderPieChart(bankAssets, savingsTotal, totalLiab);
+  renderPieChart(totalAssets, 0, totalLiab);
 }
 
 function renderAccountSection(id, items) {
@@ -388,15 +571,15 @@ function renderAccountSection(id, items) {
         <div class="account-type">${item.type}</div>
         ${item.detail ? `<div class="account-detail">${item.detail}</div>` : ''}
       </div>
-      <div class="account-balance ${item.balance >= 0 ? 'pos' : 'neg'}">${fmt(Math.abs(item.balance))}</div>
+      ${item.balance !== null ? `<div class="account-balance ${item.balance >= 0 ? 'pos' : 'neg'}">${fmt(Math.abs(item.balance))}</div>` : ''}
     </div>`).join('');
 }
 
-function typeLabel(t) {
-  return { checking: 'עו"ש', deposit: 'פיקדון', savings: 'חיסכון' }[t] || t;
+function usageLabel(u) {
+  return { checking: 'עו"ש', saving: 'חיסכון', deposit: 'פיקדון', mortgage: 'משכנתא', loans: 'הלוואות', investments: 'השקעות', business: 'עסקי' }[u] || u;
 }
 function savingsLabel(t) {
-  return { pension: 'קרן פנסיה', gemel: 'קופת גמל', hishtalmut: 'קרן השתלמות', saving: 'חיסכון', stocks: 'תיק השקעות', crypto: 'קריפטו', 'real-estate': 'נדל"ן' }[t] || 'חיסכון';
+  return { pension: 'קרן פנסיה', gemel: 'קופת גמל', hishtalmut: 'קרן השתלמות', saving: 'חיסכון', stocks: 'תיק השקעות', crypto: 'קריפטו', 'real-estate': 'נדל"ן' }[t] || t || 'חיסכון';
 }
 function savingsIcon(t) {
   return { pension: '🏛', gemel: '💰', hishtalmut: '📈', saving: '🏦', stocks: '📊', crypto: '₿', 'real-estate': '🏠' }[t] || '💰';
@@ -412,6 +595,10 @@ function renderPieChart(bank, savings, liab) {
   ].filter(d => d.value > 0);
 
   if (pieChart) pieChart.destroy();
+  if (!data.length) {
+    document.getElementById('chart-legend').innerHTML = '<div style="color:#999;font-size:13px">אין נתונים להצגה — טען קבצים מהבנק</div>';
+    return;
+  }
   pieChart = new Chart(ctx, {
     type: 'doughnut',
     data: {
@@ -423,7 +610,6 @@ function renderPieChart(bank, savings, liab) {
       plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => ' ' + fmt(ctx.raw) } } }
     }
   });
-
   document.getElementById('chart-legend').innerHTML = data.map(d => `
     <div style="display:flex;align-items:center;gap:8px;font-size:13px">
       <span style="width:12px;height:12px;border-radius:3px;background:${d.color};flex-shrink:0"></span>
@@ -432,16 +618,45 @@ function renderPieChart(bank, savings, liab) {
     </div>`).join('');
 }
 
-// ── Accounts full view ─────────────────────────────────────────
+// ── Accounts full view ────────────────────────────────────────────────────────
 function renderAccountsFull() {
   const el = document.getElementById('accounts-full');
   if (!profile) { el.innerHTML = '<div class="empty-state">עדיין לא הוגדר פרופיל</div>'; return; }
+
   const sections = [
-    { title: 'חשבונות בנק', items: (profile.banks || []).map(b => ({ icon: '🏦', name: b.bank, type: typeLabel(b.type), balance: b.balance, detail: b.creditLine ? `מסגרת אשראי: ${fmt(b.creditLine)}` : '' })) },
-    { title: 'כרטיסי אשראי', items: (profile.creditCards || []).map(c => ({ icon: '💳', name: c.company, type: 'כרטיס אשראי', balance: -c.monthly, detail: `חיוב ממוצע | תקרה: ${fmt(c.limit)} | יום חיוב ${c.day}` })) },
-    { title: 'חיסכון, גמל, פנסיה', items: (profile.savings || []).map(s => ({ icon: savingsIcon(s.type), name: s.name || savingsLabel(s.type), type: savingsLabel(s.type), balance: s.balance, detail: s.monthly ? `הפקדה חודשית: ${fmt(s.monthly)}` : '' })) },
-    { title: 'הלוואות', items: (profile.loans || []).map(l => ({ icon: '📋', name: l.type, type: l.purpose || 'הלוואה', balance: -l.balance, detail: `החזר: ${fmt(l.monthly)}/חודש | ריבית: ${l.rate}% | ${l.remaining} תשלומים` })) }
+    {
+      title: 'חשבונות בנק',
+      items: (profile.banks || []).map(b => ({
+        icon: '🏦', name: b.bank,
+        type: (b.usage || []).map(usageLabel).join(', ') || 'חשבון בנק',
+        detail: b.owner || ''
+      }))
+    },
+    {
+      title: 'כרטיסי אשראי',
+      items: (profile.creditCards || []).map(c => ({
+        icon: '💳', name: c.company, type: 'כרטיס אשראי',
+        detail: c.day ? `יום חיוב: ${c.day}` : ''
+      }))
+    },
+    {
+      title: 'חיסכון, גמל, פנסיה',
+      items: (profile.savings || []).map(s => ({
+        icon: savingsIcon(s.type),
+        name: s.name || savingsLabel(s.type),
+        type: s.type === 'other' ? (s.customType || 'אחר') : savingsLabel(s.type),
+        detail: s.goal || ''
+      }))
+    },
+    {
+      title: 'הלוואות',
+      items: (profile.loans || []).map(l => ({
+        icon: '📋', name: l.type, type: l.purpose || 'הלוואה',
+        detail: l.lender || ''
+      }))
+    }
   ];
+
   el.innerHTML = sections.map(s => `
     <div class="card" style="margin-bottom:12px">
       <div class="card-header"><h3>${s.title}</h3></div>
@@ -454,14 +669,13 @@ function renderAccountsFull() {
               <div class="account-type">${item.type}</div>
               ${item.detail ? `<div class="account-detail">${item.detail}</div>` : ''}
             </div>
-            <div class="account-balance ${item.balance >= 0 ? 'pos' : 'neg'}">${fmt(Math.abs(item.balance))}</div>
           </div>`).join('')
-        : '<div class="empty-state">לא הוגדרו נתונים</div>'
-      }</div>
+        : '<div class="empty-state">לא הוגדרו נתונים</div>'}
+      </div>
     </div>`).join('');
 }
 
-// ── Transactions ───────────────────────────────────────────────
+// ── Transactions ──────────────────────────────────────────────────────────────
 function renderTransactions() {
   const allAccounts = [...new Set(transactions.map(t => t.account))];
   const sel = document.getElementById('tx-filter-account');
@@ -496,10 +710,15 @@ function filterTransactions() {
     </tr>`).join('');
 }
 
-// ── Upload ─────────────────────────────────────────────────────
+// ── Upload ────────────────────────────────────────────────────────────────────
 async function handleUpload(event) {
   const file = event.target.files[0];
   if (!file) return;
+  await doUpload(file);
+  event.target.value = '';
+}
+
+async function doUpload(file) {
   const accountName = document.getElementById('upload-account-name').value || file.name;
   const formData = new FormData();
   formData.append('file', file);
@@ -513,14 +732,16 @@ async function handleUpload(event) {
     const data = await res.json();
     if (data.ok) {
       transactions = await fetch('/api/transactions').then(r => r.json());
-      status.innerHTML = `<div class="upload-success">✓ נטענו בהצלחה ${data.rows} שורות מ-${data.filename}</div>`;
+      renderDashboard();
+      let msg = `<div class="upload-success">✓ נטענו בהצלחה ${data.rows} שורות מ-${data.filename}</div>`;
+      if (data.warning) msg += `<div class="upload-warning" style="margin-top:8px">${data.warning}</div>`;
+      status.innerHTML = msg;
     } else {
       status.innerHTML = `<div class="upload-error">שגיאה: ${data.error}</div>`;
     }
   } catch (e) {
     status.innerHTML = `<div class="upload-error">שגיאה בהעלאה: ${e.message}</div>`;
   }
-  event.target.value = '';
 }
 
 function setupDrop() {
@@ -529,29 +750,14 @@ function setupDrop() {
   dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('drag-over'); });
   dz.addEventListener('dragleave', () => dz.classList.remove('drag-over'));
   dz.addEventListener('drop', async e => {
-    e.preventDefault(); dz.classList.remove('drag-over');
+    e.preventDefault();
+    dz.classList.remove('drag-over');
     const file = e.dataTransfer.files[0];
-    if (!file) return;
-    const accountName = document.getElementById('upload-account-name').value || file.name;
-    const formData = new FormData();
-    formData.append('file', file);
-    formData.append('accountName', accountName);
-    const status = document.getElementById('upload-status');
-    status.innerHTML = '<div style="color:#666;font-size:13px">מעלה ומנתח...</div>';
-    try {
-      const res = await fetch('/api/upload', { method: 'POST', body: formData });
-      const data = await res.json();
-      if (data.ok) {
-        transactions = await fetch('/api/transactions').then(r => r.json());
-        status.innerHTML = `<div class="upload-success">✓ נטענו ${data.rows} שורות מ-${data.filename}</div>`;
-      }
-    } catch (e) {
-      status.innerHTML = `<div class="upload-error">שגיאה: ${e.message}</div>`;
-    }
+    if (file) await doUpload(file);
   });
 }
 
-// ── AI Agent ───────────────────────────────────────────────────
+// ── AI Agent ──────────────────────────────────────────────────────────────────
 function loadApiKey() {
   const key = localStorage.getItem('anthropic_key');
   if (key) {
@@ -559,6 +765,7 @@ function loadApiKey() {
     document.getElementById('api-key-notice').style.display = 'none';
   }
 }
+
 function saveApiKey() {
   const key = document.getElementById('api-key-input').value.trim();
   if (key) {
@@ -569,46 +776,66 @@ function saveApiKey() {
 }
 
 function buildSystemContext() {
-  if (!profile) return 'אין פרופיל פיננסי.';
-  const adultMembers = (profile.members || []).filter(m => m.isAdult !== false);
-  const childMembers = (profile.members || []).filter(m => m.isAdult === false);
-  const members = adultMembers.map(m => m.name + ' גיל ' + m.age + ', הכנסה ברוטו ' + fmt(m.income) + ', נטו ' + fmt(m.netIncome)).join(' | ');
-  const childrenStr = childMembers.length ? childMembers.map(m => m.name + ' גיל ' + m.age).join(', ') : '';
-  const banks = (profile.banks || []).map(b => `${b.bank} ${typeLabel(b.type)}: ${fmt(b.balance)} (מסגרת: ${fmt(b.creditLine)})`).join(' | ');
-  const cc = (profile.creditCards || []).map(c => `${c.company}: חיוב ממוצע ${fmt(c.monthly)}, תקרה ${fmt(c.limit)}`).join(' | ');
-  const loans = (profile.loans || []).map(l => `${l.type} (${l.purpose}): יתרה ${fmt(l.balance)}, החזר ${fmt(l.monthly)}/חודש, ריבית ${l.rate}%, ${l.remaining} תשלומים`).join(' | ');
-  const savings = (profile.savings || []).map(s => `${s.name || savingsLabel(s.type)} (${savingsLabel(s.type)}): ${fmt(s.balance)}, הפקדה חודשית ${fmt(s.monthly)}`).join(' | ');
-  const txSummary = transactions.length ? `\n\n— עסקאות: ${transactions.length} רשומות ממוצע חודשי לא מחושב, בקש ממני לנתח לפי תקופה ספציפית.` : '';
+  if (!profile) return 'No financial profile available.';
 
-  const bankAssets = (profile.banks || []).filter(b => b.balance > 0).reduce((s, b) => s + b.balance, 0);
-  const savingsTotal = (profile.savings || []).reduce((s, b) => s + (b.balance || 0), 0);
-  const loanTotal = (profile.loans || []).reduce((s, l) => s + (l.balance || 0), 0);
-  const netIncome = (profile.members || []).reduce((s, m) => s + (m.netIncome || 0), 0);
-  const loanMonthly = (profile.loans || []).reduce((s, l) => s + (l.monthly || 0), 0);
-  const ccMonthly = (profile.creditCards || []).reduce((s, c) => s + (c.monthly || 0), 0);
+  const adults = (profile.members || []).filter(m => m.isAdult !== false);
+  const children = (profile.members || []).filter(m => m.isAdult === false);
+  const membersStr = adults.map(m => `${m.name} (גיל ${m.age})`).join(' | ');
+  const childrenStr = children.length ? children.map(m => `${m.name} (גיל ${m.age})`).join(', ') : 'אין';
 
-  return `אתה סוכן פיננסי אישי מקצועי. אתה מדבר עברית שוטפת ונותן המלצות ברורות ומספריות.
+  const banks = (profile.banks || []).map(b => `${b.bank} [${(b.usage || []).map(usageLabel).join(', ')}]`).join(' | ');
+  const cc = (profile.creditCards || []).map(c => `${c.company}${c.day ? ` (יום חיוב ${c.day})` : ''}`).join(' | ');
+  const loans = (profile.loans || []).map(l => `${l.type}${l.purpose ? ' — ' + l.purpose : ''}${l.lender ? ' ב-' + l.lender : ''}`).join(' | ');
+  const savings = (profile.savings || []).map(s => {
+    const typeName = s.type === 'other' ? (s.customType || 'אחר') : savingsLabel(s.type);
+    return `${s.name} (${typeName})${s.goal ? ' — ' + s.goal : ''}`;
+  }).join(' | ');
+
+  // Transaction summaries
+  const now = new Date();
+  const thisMonth = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
+  const lastBalanceByAccount = {};
+  let monthlyIncome = 0, monthlyExpenses = 0;
+
+  transactions.forEach(t => {
+    if (t.balance) lastBalanceByAccount[t.account] = t.balance;
+    const tMonth = (t.date || t.imported_at || '').substring(0, 7);
+    if (tMonth === thisMonth) {
+      if (t.amount > 0) monthlyIncome += t.amount;
+      else monthlyExpenses += Math.abs(t.amount);
+    }
+  });
+
+  const totalAssets = Object.values(lastBalanceByAccount).filter(b => b > 0).reduce((s, b) => s + b, 0);
+  const totalLiab = Object.values(lastBalanceByAccount).filter(b => b < 0).reduce((s, b) => s + Math.abs(b), 0);
+  const balanceSummary = Object.entries(lastBalanceByAccount)
+    .map(([acc, bal]) => `${acc}: ${fmt(bal)}`).join(' | ') || 'אין נתוני יתרה';
+
+  return `אתה סוכן פיננסי אישי מקצועי. אתה עונה בעברית שוטפת ונותן המלצות ברורות ומספריות.
 
 === פרופיל משק הבית ===
-גודל: ${profile.householdSize} נפשות | סטטוס: ${profile.maritalStatus}
-בני משק בית: ${members || 'לא הוגדרו'}\nילדים: ${childrenStr || 'אין'}
+גודל: ${profile.householdSize} נפשות | סטטוס: ${profile.maritalStatus || 'לא צוין'}
+מבוגרים: ${membersStr || 'לא הוגדרו'} | ילדים: ${childrenStr}
 מטרות: ${profile.goals || 'לא הוגדרו'}
 
-=== נתונים פיננסיים ===
+=== חשבונות ===
 חשבונות בנק: ${banks || 'אין'}
 כרטיסי אשראי: ${cc || 'אין'}
 הלוואות: ${loans || 'אין'}
 חיסכון/השקעות: ${savings || 'אין'}
 
-=== סיכום מהיר ===
-נכסים: ${fmt(bankAssets + savingsTotal)} | חובות: ${fmt(loanTotal)} | הון עצמי: ${fmt(bankAssets + savingsTotal - loanTotal)}
-הכנסה נטו חודשית: ${fmt(netIncome)} | החזרי הלוואות: ${fmt(loanMonthly)} | הוצאות אשראי ממוצע: ${fmt(ccMonthly)}
-יחס חוב להכנסה: ${netIncome > 0 ? ((loanMonthly / netIncome) * 100).toFixed(1) + '%' : 'לא ניתן לחשב'}
-${txSummary}
+=== סיכום עסקאות ===
+יתרות לפי חשבון: ${balanceSummary}
+סה"כ נכסים (יתרות חיוביות): ${fmt(totalAssets)}
+סה"כ התחייבויות (יתרות שליליות): ${fmt(totalLiab)}
+הכנסות חודש נוכחי: ${fmt(monthlyIncome)}
+הוצאות חודש נוכחי: ${fmt(monthlyExpenses)}
+סה"כ עסקאות טעונות: ${transactions.length}
 
-כשעונים על שאלות:
+הוראות:
+- ענה בעברית בלבד
 - היה ספציפי ומספרי
-- תמיד ציין את הנחות העבודה שלך
+- ציין את הנחות העבודה שלך
 - תן המלצות ברות-ביצוע עם תעדוף
 - כשמזהה סיכון — הסבר את הפתרון
 - אם חסרים נתונים — ציין בדיוק מה חסר`;
