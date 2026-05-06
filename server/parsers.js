@@ -420,6 +420,10 @@ function findTableWithKeywords(tables, keywords) {
   return tables.reduce((best, t) => t.length > best.length ? t : best, []);
 }
 
+function isFrameset(html) {
+  return /<frameset[\s>]/i.test(html);
+}
+
 function readLeumiHtml(filePath) {
   const raw = fs.readFileSync(filePath);
   // Check for BOM and strip it
@@ -435,8 +439,20 @@ function readLeumiHtml(filePath) {
   return raw.slice(offset).toString('latin1');
 }
 
+const LEUMI_FRAMESET_WARNING =
+  'קובץ לאומי זה הוא קובץ מסגרת (frameset) ואינו מכיל נתוני תנועות ישירות.\n' +
+  'כאשר הורדת את הקובץ מלאומי נוצרה תיקייה בשם "שם-הקובץ.files" לצד הקובץ.\n' +
+  'פתח את התיקייה, מצא את הקובץ sheet001.htm והעלה אותו ישירות לאתר במקום הקובץ הראשי.';
+
 function parseLeumiTransactions(filePath, accountName, sourceFile) {
   const html = readLeumiHtml(filePath);
+
+  // Frameset files are just pointers — the real data is in sheet001.htm
+  if (isFrameset(html)) {
+    console.log('[leumi_tx] detected frameset — no transaction data in this file');
+    return txResult([], 'leumi_transactions', { found: 0, imported: 0, skipped: 0 }, LEUMI_FRAMESET_WARNING);
+  }
+
   const account = resolveAccount(extractLeumiAccountId(html), accountName, sourceFile);
 
   // ── Method 1: per-table HTML regex — pick the table with תאריך ──────────
@@ -751,6 +767,13 @@ async function parseFile(filePath, accountName) {
 
   try {
     if (ext === '.pdf') return parsePdf(filePath, accountName, sourceFile);
+
+    // Direct upload of sheet001.htm (or any Leumi .htm data file)
+    if (ext === '.htm' || ext === '.html') {
+      const html = readLeumiHtml(filePath);
+      if (html.includes('פירוט יתרות')) return parseLeumiBalances(filePath, accountName, sourceFile);
+      return parseLeumiTransactions(filePath, accountName, sourceFile);
+    }
 
     if ((ext === '.xls' || ext === '.xlsx') && isHtmlFile(filePath)) {
       const html = readLeumiHtml(filePath);

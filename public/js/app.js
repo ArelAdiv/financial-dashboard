@@ -763,12 +763,18 @@ async function doUpload(file) {
       renderDashboard();
       loadUploads();
       loadAccountsMgmt();
-      const skipped = data.stats?.skipped ?? (data.rows - data.inserted);
-      const skippedNote = skipped > 0 ? ` (${skipped} שורות דולגו)` : '';
-      const accountNote = data.detectedAccount ? `<br><span style="font-size:12px;opacity:.8">חשבון שזוהה: <strong>${data.detectedAccount}</strong></span>` : '';
-      let msg = `<div class="upload-success">✓ נטענו בהצלחה ${data.inserted} שורות חדשות מ-${data.filename}${skippedNote}${accountNote}</div>`;
-      if (data.warning) msg += `<div class="upload-warning" style="margin-top:8px">${data.warning}</div>`;
-      status.innerHTML = msg;
+
+      // If 0 rows and there's a warning (e.g. frameset file), show only the warning
+      if (data.inserted === 0 && data.warning) {
+        status.innerHTML = `<div class="upload-warning" style="white-space:pre-line">${data.warning}</div>`;
+      } else {
+        const skipped = data.stats?.skipped ?? (data.rows - data.inserted);
+        const skippedNote = skipped > 0 ? ` (${skipped} שורות דולגו)` : '';
+        const accountNote = data.detectedAccount ? `<br><span style="font-size:12px;opacity:.8">חשבון שזוהה: <strong>${data.detectedAccount}</strong></span>` : '';
+        let msg = `<div class="upload-success">✓ נטענו בהצלחה ${data.inserted} שורות חדשות מ-${data.filename}${skippedNote}${accountNote}</div>`;
+        if (data.warning) msg += `<div class="upload-warning" style="margin-top:8px">${data.warning}</div>`;
+        status.innerHTML = msg;
+      }
     } else {
       status.innerHTML = `<div class="upload-error">שגיאה: ${data.error}</div>`;
     }
