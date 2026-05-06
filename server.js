@@ -165,16 +165,29 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
   // Profile-data files (balances, mortgage) → update profile.json, not transactions
   if (result.type === 'profile_data') {
     const existing = loadProfile() || {};
-    existing[result.profileKey] = result.profileData;
+
+    if (result.profileKey === 'balance_snapshot') {
+      // Merge accounts from this upload with any existing snapshot accounts from
+      // other sources so Poalim + Leumi snapshots coexist
+      const prev = existing.balance_snapshot || {};
+      const prevAccounts = (prev.accounts || []).filter(a => a.source !== result.profileData.source);
+      const mergedAccounts = [...prevAccounts, ...(result.profileData.accounts || [])];
+      existing.balance_snapshot = { ...result.profileData, accounts: mergedAccounts };
+    } else {
+      existing[result.profileKey] = result.profileData;
+    }
+
     existing.updatedAt = new Date().toISOString();
     saveProfile(existing);
+    const accountCount = result.profileData?.accounts?.length ?? 0;
     return res.json({
       ok: true,
-      filename: req.file.originalname,
-      rows: 0,
+      filename:       req.file.originalname,
+      rows:           accountCount,
+      inserted:       accountCount,
       profileUpdated: result.profileKey,
-      sourceType: result.sourceType,
-      warning: result.warning || null
+      sourceType:     result.sourceType,
+      warning:        result.warning || null
     });
   }
 

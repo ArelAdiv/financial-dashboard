@@ -421,3 +421,16 @@ body {
   cursor: pointer; transition: all 0.12s; white-space: nowrap;
 }
 .remove-upload-btn:hover { background: var(--red); color: #fff; border-color: var(--red); }
+
+/* BALANCE SNAPSHOT CARD */
+.snapshot-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 1rem; padding: 4px 0; }
+.snapshot-section { background: var(--bg); border-radius: 10px; padding: 12px 14px; }
+.snapshot-type-header { font-size: 13px; font-weight: 600; color: var(--text-muted); margin-bottom: 8px; }
+.snapshot-row { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; padding: 3px 0; font-size: 13px; }
+.snapshot-row + .snapshot-row { border-top: 1px solid var(--border); }
+.snapshot-sub { font-size: 12px; color: var(--text-muted); }
+.snapshot-meta-row { opacity: .7; }
+.snapshot-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.snapshot-bal { font-weight: 600; white-space: nowrap; direction: ltr; }
+.snapshot-bal.pos { color: var(--green); }
+.snapshot-bal.neg { color: var(--red); }

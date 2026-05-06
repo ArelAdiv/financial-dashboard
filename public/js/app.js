@@ -573,6 +573,7 @@ function renderDashboard() {
     balance: null, detail: l.lender || ''
   })));
 
+  renderBalanceSnapshot();
   renderPieChart(totalAssets, 0, totalLiab);
 }
 
@@ -589,6 +590,86 @@ function renderAccountSection(id, items) {
       </div>
       ${item.balance !== null ? `<div class="account-balance ${item.balance >= 0 ? 'pos' : 'neg'}">${fmt(Math.abs(item.balance))}</div>` : ''}
     </div>`).join('');
+}
+
+// ── Balance snapshot card ─────────────────────────────────────────────────────
+const SNAP_TYPE_LABEL = {
+  checking: 'עו"ש', savings: 'חסכונות ופיקדונות', investments: 'השקעות',
+  pension: 'פנסיה / גמל', mortgage: 'משכנתא', loan: 'הלוואות'
+};
+const SNAP_TYPE_ICON = {
+  checking: '🏦', savings: '💰', investments: '📈',
+  pension: '🏛', mortgage: '🏠', loan: '📋'
+};
+const SNAP_ORDER = ['checking', 'savings', 'investments', 'pension', 'mortgage', 'loan'];
+
+function renderBalanceSnapshot() {
+  const card = document.getElementById('card-balance-snapshot');
+  const el   = document.getElementById('dash-balance-snapshot');
+  const dateEl = document.getElementById('snapshot-date');
+  if (!card || !el) return;
+
+  const snap = profile?.balance_snapshot;
+  if (!snap || !snap.accounts?.length) { card.style.display = 'none'; return; }
+
+  card.style.display = '';
+
+  const d = snap.report_date;
+  dateEl.textContent = d
+    ? 'נכון ל-' + d.substring(8,10) + '/' + d.substring(5,7) + '/' + d.substring(0,4)
+    : snap.updated_at ? 'עודכן: ' + new Date(snap.updated_at).toLocaleDateString('he-IL') : '';
+
+  // Group by type, preserve order
+  const groups = {};
+  for (const acc of snap.accounts) {
+    if (!groups[acc.type]) groups[acc.type] = [];
+    groups[acc.type].push(acc);
+  }
+
+  let html = '<div class="snapshot-grid">';
+  for (const type of SNAP_ORDER) {
+    const items = groups[type];
+    if (!items) continue;
+
+    const topItems  = items.filter(i => i.isSectionTotal || !i.isSub);
+    const subItems  = items.filter(i => i.isSub && !i.isSectionTotal);
+    const displayed = topItems.length ? topItems : items;
+
+    html += `<div class="snapshot-section">
+      <div class="snapshot-type-header">${SNAP_TYPE_ICON[type] || '•'} ${SNAP_TYPE_LABEL[type] || type}</div>`;
+
+    for (const item of displayed) {
+      const isDebt  = (type === 'loan' || type === 'mortgage');
+      const balance = item.balance ?? 0;
+      const cls     = isDebt ? 'neg' : (balance >= 0 ? 'pos' : 'neg');
+      html += `<div class="snapshot-row${item.isSub ? ' snapshot-sub' : ''}">
+        <span class="snapshot-label">${item.label || SNAP_TYPE_LABEL[type] || type}</span>
+        <span class="snapshot-bal ${cls}">${fmt(Math.abs(balance))}</span>
+      </div>`;
+      if (item.credit_line) {
+        html += `<div class="snapshot-row snapshot-sub snapshot-meta-row">
+          <span class="snapshot-label">מסגרת אשראי</span>
+          <span class="snapshot-bal">${fmt(Math.abs(item.credit_line))}</span>
+        </div>`;
+      }
+    }
+
+    if (subItems.length) {
+      for (const item of subItems) {
+        const balance = item.balance ?? 0;
+        const isDebt  = (type === 'loan' || type === 'mortgage');
+        const cls     = isDebt ? 'neg' : (balance >= 0 ? 'pos' : 'neg');
+        html += `<div class="snapshot-row snapshot-sub">
+          <span class="snapshot-label">${item.label}</span>
+          <span class="snapshot-bal ${cls}">${fmt(Math.abs(balance))}</span>
+        </div>`;
+      }
+    }
+
+    html += '</div>';
+  }
+  html += '</div>';
+  el.innerHTML = html;
 }
 
 function usageLabel(u) {
@@ -764,8 +845,18 @@ async function doUpload(file) {
       loadUploads();
       loadAccountsMgmt();
 
+      // Balance/profile report uploaded
+      if (data.profileUpdated) {
+        profile = await fetch('/api/profile').then(r => r.json());
+        renderDashboard();
+        const count = data.inserted || 0;
+        let msg = `<div class="upload-success">✓ דוח יתרות עודכן מ-${data.filename}`;
+        if (count > 0) msg += ` — ${count} סעיפים נקלטו`;
+        msg += '</div>';
+        if (data.warning) msg += `<div class="upload-warning" style="margin-top:8px;white-space:pre-line">${data.warning}</div>`;
+        status.innerHTML = msg;
       // If 0 rows and there's a warning (e.g. frameset file), show only the warning
-      if (data.inserted === 0 && data.warning) {
+      } else if (data.inserted === 0 && data.warning) {
         status.innerHTML = `<div class="upload-warning" style="white-space:pre-line">${data.warning}</div>`;
       } else {
         const skipped = data.stats?.skipped ?? (data.rows - data.inserted);
