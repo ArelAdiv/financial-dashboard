@@ -825,10 +825,14 @@ async function loadUploads() {
               <td style="text-align:center">${r.tx_count}</td>
               <td style="font-size:12px;color:#666">${fmtDate(r.date_from)} — ${fmtDate(r.date_to)}</td>
               <td style="font-size:12px;color:#999">${fmtDate(r.imported_at)}</td>
-              <td><button class="remove-upload-btn" onclick="removeUpload(${JSON.stringify(r.source_file)})">הסר</button></td>
+              <td><button class="remove-upload-btn" data-file="${(r.source_file || '').replace(/&/g,'&amp;').replace(/"/g,'&quot;')}">הסר</button></td>
             </tr>`).join('')}
         </tbody>
       </table>`;
+
+    container.querySelectorAll('.remove-upload-btn').forEach(btn => {
+      btn.addEventListener('click', () => removeUpload(btn.dataset.file));
+    });
   } catch (e) {
     container.innerHTML = `<div class="upload-error">שגיאה בטעינת רשימה: ${e.message}</div>`;
   }
