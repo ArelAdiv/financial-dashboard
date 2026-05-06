@@ -716,14 +716,20 @@ function filterTransactions() {
     return;
   }
   empty.style.display = 'none';
-  body.innerHTML = filtered.slice(0, 500).map(t => `
+  body.innerHTML = filtered.slice(0, 500).map(t => {
+    const credit = t.amount > 0  ? Math.round(t.amount).toLocaleString('he-IL')  : '';
+    const debit  = t.amount < 0  ? Math.round(-t.amount).toLocaleString('he-IL') : '';
+    const bal    = t.balance != null ? Math.round(t.balance).toLocaleString('he-IL') : '—';
+    return `
     <tr>
-      <td style="color:#666;white-space:nowrap">${t.date || '—'}</td>
+      <td class="tx-date">${t.date || '—'}</td>
       <td>${t.description || '—'}</td>
-      <td style="color:#999;font-size:12px">${t.account || ''}</td>
-      <td class="tx-amount ${t.amount >= 0 ? 'pos' : 'neg'}">${t.amount >= 0 ? '+' : ''}${Math.round(t.amount).toLocaleString('he-IL')}</td>
-      <td class="tx-amount" style="color:#999">${t.balance ? Math.round(t.balance).toLocaleString('he-IL') : '—'}</td>
-    </tr>`).join('');
+      <td class="tx-doc">${t.account || ''}</td>
+      <td class="tx-num tx-credit">${credit}</td>
+      <td class="tx-num tx-debit">${debit}</td>
+      <td class="tx-num tx-bal">${bal}</td>
+    </tr>`;
+  }).join('');
 }
 
 // ── Upload ────────────────────────────────────────────────────────────────────

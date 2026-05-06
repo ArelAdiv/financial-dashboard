@@ -257,17 +257,21 @@ body {
 /* TRANSACTIONS TABLE */
 .tx-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .tx-table th {
-  text-align: right; padding: 8px 10px;
+  text-align: right; padding: 8px 12px;
   border-bottom: 1px solid var(--border);
-  font-size: 11px; font-weight: 500;
-  color: var(--text-secondary); text-transform: uppercase;
+  font-size: 11px; font-weight: 600;
+  color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.04em;
 }
-.tx-table td { padding: 8px 10px; border-bottom: 1px solid var(--border); }
+.tx-table th.th-num { text-align: left; }
+.tx-table td { padding: 8px 12px; border-bottom: 1px solid var(--border); vertical-align: middle; }
 .tx-table tr:last-child td { border-bottom: none; }
 .tx-table tr:hover td { background: var(--bg); }
-.tx-amount { direction: ltr; text-align: left; font-weight: 500; }
-.tx-amount.pos { color: var(--green); }
-.tx-amount.neg { color: var(--red); }
+.tx-date  { color: #666; white-space: nowrap; }
+.tx-doc   { color: #999; font-size: 12px; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tx-num   { direction: ltr; text-align: left; font-weight: 500; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tx-credit { color: var(--green); }
+.tx-debit  { color: var(--red); }
+.tx-bal    { color: #999; }
 
 /* UPLOAD */
 .drop-zone {
