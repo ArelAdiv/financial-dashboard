@@ -96,6 +96,79 @@ function colIdx(headers, keywords, fallback = -1) {
   return i >= 0 ? i : fallback;
 }
 
+// ── Account ID extraction ─────────────────────────────────────────────────────
+//
+// Each extractor returns a short stable identifier (account/card number)
+// that uniquely identifies the financial account in the file.
+// If found, it is used as the `account` field so uploads from the same
+// account always group together regardless of user-provided name.
+
+function extractPoalimAccountId(rows) {
+  // Header rows contain: "מספר חשבון 12-766-71350"
+  for (let i = 0; i < Math.min(rows.length, 8); i++) {
+    const line = rows[i].map(c => str(c)).join(' ');
+    const m = line.match(/מספר חשבון[:\s]*([\d\-]+)/);
+    if (m) return `פועלים ${m[1].trim()}`;
+  }
+  return null;
+}
+
+function extractLeumiAccountId(html) {
+  // HTML header contains: "מספר חשבון: 123456789" or similar
+  const m = html.match(/מספר חשבון[:\s]*([\d\-]+)/);
+  if (m) return `לאומי ${m[1].trim()}`;
+  return null;
+}
+
+function extractIsracardId(rows) {
+  // Header rows contain: "4 ספרות אחרונות של הכרטיס: 1234" or card number
+  for (let i = 0; i < Math.min(rows.length, 12); i++) {
+    const line = rows[i].map(c => str(c)).join(' ');
+    let m = line.match(/\*+(\d{4})/);
+    if (m) return `ישראכרט *${m[1]}`;
+    m = line.match(/ספרות אחרונות[:\s]*(\d{4})/);
+    if (m) return `ישראכרט *${m[1]}`;
+    m = line.match(/כרטיס[:\s]+(\d{8,19})/);
+    if (m) return `ישראכרט ${m[1].slice(-4).padStart(m[1].length, '*')}`;
+  }
+  return null;
+}
+
+function extractMaxId(rows) {
+  for (let i = 0; i < Math.min(rows.length, 8); i++) {
+    const line = rows[i].map(c => str(c)).join(' ');
+    let m = line.match(/\*+(\d{4})/);
+    if (m) return `מקס *${m[1]}`;
+    m = line.match(/ספרות אחרונות[:\s]*(\d{4})/);
+    if (m) return `מקס *${m[1]}`;
+  }
+  return null;
+}
+
+function extractCalId(rows) {
+  for (let i = 0; i < Math.min(rows.length, 8); i++) {
+    const line = rows[i].map(c => str(c)).join(' ');
+    let m = line.match(/\*+(\d{4})/);
+    if (m) return `כאל *${m[1]}`;
+    m = line.match(/ספרות אחרונות[:\s]*(\d{4})/);
+    if (m) return `כאל *${m[1]}`;
+  }
+  return null;
+}
+
+// Resolves the final account label:
+// - Detected account ID takes priority as the unique identifier
+// - User-provided name is appended in parentheses for readability
+// - Falls back to user-provided name, then sourceFile
+function resolveAccount(detected, userProvided, sourceFile) {
+  if (detected) {
+    return userProvided && userProvided !== sourceFile
+      ? `${userProvided} (${detected})`
+      : detected;
+  }
+  return userProvided || sourceFile;
+}
+
 // ── File-type detection ───────────────────────────────────────────────────────
 
 function detectFileType(filePath, rows) {
@@ -193,10 +266,11 @@ function parseGeneric(rows, accountName, sourceFile) {
 
 // ── Poalim: Transactions ──────────────────────────────────────────────────────
 function parsePoalimTransactions(rows, accountName, sourceFile) {
+  const account = resolveAccount(extractPoalimAccountId(rows), accountName, sourceFile);
   const hi = findHeader(rows, ['חובה'], 10);
   if (hi < 0) {
     console.log('[poalim_tx] header not found, falling back to generic');
-    return parseGeneric(rows, accountName, sourceFile);
+    return parseGeneric(rows, account, sourceFile);
   }
 
   const hdrs = rows[hi].map(c => str(c));
@@ -233,7 +307,7 @@ function parsePoalimTransactions(rows, accountName, sourceFile) {
       category:  null,
       reference: str(row[dc.ref]) || null,
       notes:     noteParts.join(' | ') || null,
-      account:   accountName, source: sourceFile, source_type: 'poalim_transactions'
+      account:   account, source: sourceFile, source_type: 'poalim_transactions'
     });
   }
 
@@ -304,6 +378,7 @@ function parseLeumiTransactions(filePath, accountName, sourceFile) {
   let html = raw.toString('utf8');
   if (html.includes('?????') || html.includes('')) html = raw.toString('latin1');
 
+  const account = resolveAccount(extractLeumiAccountId(html), accountName, sourceFile);
   const root  = parse(html);
   const transactions = [];
   let found = 0, skipped = 0;
@@ -363,7 +438,7 @@ function parseLeumiTransactions(filePath, accountName, sourceFile) {
       category:  null,
       reference: dc.ref >= 0 ? cells[dc.ref] || null : null,
       notes:     null,
-      account:   accountName, source: sourceFile, source_type: 'leumi_transactions'
+      account:   account, source: sourceFile, source_type: 'leumi_transactions'
     });
   }
 
@@ -398,7 +473,7 @@ function parseLeumiBalances(filePath, accountName, sourceFile) {
 
 // ── Isracard ──────────────────────────────────────────────────────────────────
 function parseIsracard(rows, accountName, sourceFile) {
-  // Header row contains: תאריך + שם בית עסק + סכום
+  const account = resolveAccount(extractIsracardId(rows), accountName, sourceFile);
   const hi = findHeader(rows, ['תאריך', 'בית עסק'], 15);
   if (hi < 0) {
     console.log('[isracard] header not found, falling back to generic');
@@ -434,7 +509,7 @@ function parseIsracard(rows, accountName, sourceFile) {
       category:  null,
       reference: dc.ref >= 0 ? str(row[dc.ref]) || null : null,
       notes:     dc.notes >= 0 ? str(row[dc.notes]) || null : null,
-      account:   accountName, source: sourceFile, source_type: 'isracard_cc'
+      account:   account, source: sourceFile, source_type: 'isracard_cc'
     });
   }
 
@@ -444,11 +519,11 @@ function parseIsracard(rows, accountName, sourceFile) {
 
 // ── Max ───────────────────────────────────────────────────────────────────────
 function parseMax(rows, accountName, sourceFile) {
-  // Header row contains: תאריך + קטגוריה + סכום
+  const account = resolveAccount(extractMaxId(rows), accountName, sourceFile);
   const hi = findHeader(rows, ['תאריך', 'סכום'], 15);
   if (hi < 0) {
     console.log('[max] header not found, falling back to generic');
-    return parseGeneric(rows, accountName, sourceFile);
+    return parseGeneric(rows, account, sourceFile);
   }
 
   const hdrs = rows[hi].map(c => str(c));
@@ -486,7 +561,7 @@ function parseMax(rows, accountName, sourceFile) {
       category:  dc.category >= 0 ? str(row[dc.category]) || null : null,
       reference: null,
       notes:     noteParts.join(' | ') || null,
-      account:   accountName, source: sourceFile, source_type: 'max_cc'
+      account:   account, source: sourceFile, source_type: 'max_cc'
     });
   }
 
@@ -496,11 +571,11 @@ function parseMax(rows, accountName, sourceFile) {
 
 // ── Cal ───────────────────────────────────────────────────────────────────────
 function parseCal(rows, accountName, sourceFile) {
-  // Header row contains: תאריך + סכום
+  const account = resolveAccount(extractCalId(rows), accountName, sourceFile);
   const hi = findHeader(rows, ['תאריך', 'סכום'], 15);
   if (hi < 0) {
     console.log('[cal] header not found, falling back to generic');
-    return parseGeneric(rows, accountName, sourceFile);
+    return parseGeneric(rows, account, sourceFile);
   }
 
   const hdrs = rows[hi].map(c => str(c));
@@ -534,7 +609,7 @@ function parseCal(rows, accountName, sourceFile) {
       category:  dc.category >= 0 ? str(row[dc.category]) || null : null,
       reference: null,
       notes:     dc.notes >= 0 ? str(row[dc.notes]) || null : null,
-      account:   accountName, source: sourceFile, source_type: 'cal_cc'
+      account:   account, source: sourceFile, source_type: 'cal_cc'
     });
   }
 

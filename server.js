@@ -134,16 +134,19 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
   // Transaction files → insert into SQLite
   const inserted = insertMany(result.transactions);
 
+  const detectedAccount = result.transactions[0]?.account || null;
+
   res.json({
     ok: true,
-    filename:   req.file.originalname,
-    rows:       result.transactions.length,
+    filename:        req.file.originalname,
+    rows:            result.transactions.length,
     inserted,
-    duplicates: result.transactions.length - inserted,
-    sourceType: result.sourceType,
-    stats:      result.stats || null,
-    preview:    result.transactions.slice(0, 5),
-    warning:    result.warning || null
+    duplicates:      result.transactions.length - inserted,
+    sourceType:      result.sourceType,
+    detectedAccount,
+    stats:           result.stats || null,
+    preview:         result.transactions.slice(0, 5),
+    warning:         result.warning || null
   });
 });
 
