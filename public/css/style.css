@@ -269,7 +269,8 @@ body {
 .tx-table tr:hover td { background: var(--bg); }
 .tx-date  { color: #666; white-space: nowrap; }
 .tx-doc   { color: #999; font-size: 12px; max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tx-ref   { color: #aaa; font-size: 12px; direction: ltr; white-space: nowrap; }
+.tx-ref   { color: #aaa; font-size: 12px; direction: ltr; text-align: left; white-space: nowrap; }
+.th-ltr   { text-align: left !important; direction: ltr; }
 .tx-num   { direction: ltr; text-align: left; font-weight: 500; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .tx-credit { color: var(--green); }
 .tx-debit  { color: var(--red); }
