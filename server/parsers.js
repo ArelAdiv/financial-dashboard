@@ -393,66 +393,58 @@ function readLeumiHtml(filePath) {
 }
 
 function parseLeumiTransactions(filePath, accountName, sourceFile) {
-  const { parse } = require('node-html-parser');
   const html = readLeumiHtml(filePath);
-
-  console.log(`[leumi_tx] html length=${html.length} hasTable=${html.includes('<table')}`);
-
   const account = resolveAccount(extractLeumiAccountId(html), accountName, sourceFile);
-  const root  = parse(html);
-  const transactions = [];
-  let found = 0, skipped = 0;
 
-  // Find the data table: contains date column AND debit/credit columns
-  // Support multiple Hebrew variants of column names
-  let dataTable = null;
-  for (const t of root.querySelectorAll('table')) {
-    const text = t.text;
-    if (text.includes('תאריך') && (
-        text.includes('חובה') || text.includes('זכות') ||
-        text.includes('חיוב') || text.includes('זיכוי'))) {
-      dataTable = t; break;
-    }
+  // Use xlsx to parse the HTML/Office-XML content directly — more robust
+  // than DOM parsing for the Office XML format Leumi exports
+  let rows;
+  try {
+    const wb = xlsx.read(html, { type: 'string' });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    rows = xlsx.utils.sheet_to_json(ws, { header: 1, defval: '', raw: false });
+  } catch (e) {
+    console.log('[leumi_tx] xlsx parse failed:', e.message);
+    return txResult([], 'leumi_transactions', { found: 0, imported: 0, skipped: 0 },
+      'לא ניתן לנתח את קובץ לאומי: ' + e.message);
   }
-  if (!dataTable) {
-    console.log('[leumi_transactions] No data table found — tables:', root.querySelectorAll('table').length);
+
+  console.log(`[leumi_tx] rows=${rows.length}`);
+
+  // Dynamic header + column detection (same pattern as all other parsers)
+  const hi = findHeader(rows, ['תאריך'], 20);
+  if (hi < 0) {
+    console.log('[leumi_tx] header row not found');
     return txResult([], 'leumi_transactions', { found: 0, imported: 0, skipped: 0 });
   }
 
-  const tRows = dataTable.querySelectorAll('tr');
+  const hdrs = rows[hi].map(c => str(c));
+  console.log(`[leumi_tx] headerIdx=${hi} cols:`, hdrs);
 
-  // Find header row — look for date + any description variant
-  let headerIdx = 0;
-  for (let i = 0; i < tRows.length; i++) {
-    const t = tRows[i].text;
-    if (t.includes('תאריך') && (t.includes('תיאור') || t.includes('פרטים') || t.includes('תאור'))) {
-      headerIdx = i; break;
-    }
-  }
-
-  const headerCells = tRows[headerIdx].querySelectorAll('th,td').map(td => td.text.trim());
-  console.log(`[leumi_tx] headerIdx=${headerIdx} cols:`, headerCells);
-  const hci = (...keys) => headerCells.findIndex(c => keys.some(k => c.includes(k)));
+  const ci = (keywords, def) => {
+    const i = hdrs.findIndex(h => keywords.some(k => h.includes(k)));
+    return i >= 0 ? i : def;
+  };
   const dc = {
-    date:    hci('תאריך'),
-    desc:    hci('תיאור', 'תאור', 'פרטים', 'פעולה'),
-    debit:   hci('חובה', 'חיוב'),
-    credit:  hci('זכות', 'זיכוי'),
-    balance: hci('יתרה'),
-    ref:     hci('אסמכתא', 'מסמך')
+    date:    ci(['תאריך'], 0),
+    desc:    ci(['תיאור', 'תאור', 'פרטים', 'פעולה'], 1),
+    ref:     ci(['אסמכתא', 'מסמך'], -1),
+    debit:   ci(['חובה', 'חיוב'], -1),
+    credit:  ci(['זכות', 'זיכוי'], -1),
+    balance: ci(['יתרה'], -1)
   };
 
-  for (let i = headerIdx + 1; i < tRows.length; i++) {
+  let found = 0, skipped = 0;
+  const transactions = [];
+
+  for (const row of rows.slice(hi + 1)) {
     found++;
-    const cells = tRows[i].querySelectorAll('td').map(td => td.text.trim());
-    if (cells.length < 3) { skipped++; continue; }
-
-    const date = normalizeDate(cells[dc.date >= 0 ? dc.date : 0]);
+    const date = normalizeDate(row[dc.date]);
     if (!date) { skipped++; continue; }
-    if (isSummaryRow(cells)) { skipped++; continue; }
+    if (isSummaryRow(row)) { skipped++; continue; }
 
-    const credit = dc.credit >= 0 ? parseNum(cells[dc.credit]) : null;
-    const debit  = dc.debit  >= 0 ? parseNum(cells[dc.debit])  : null;
+    const credit = dc.credit >= 0 ? parseNum(row[dc.credit]) : null;
+    const debit  = dc.debit  >= 0 ? parseNum(row[dc.debit])  : null;
 
     let amount = 0;
     if (credit !== null && credit !== 0)     amount =  Math.abs(credit);
@@ -461,11 +453,11 @@ function parseLeumiTransactions(filePath, accountName, sourceFile) {
 
     transactions.push({
       date,
-      description: cells[dc.desc >= 0 ? dc.desc : 1] ?? '',
+      description: str(row[dc.desc]),
       amount,
-      balance:   dc.balance >= 0 ? parseNum(cells[dc.balance]) : null,
+      balance:   dc.balance >= 0 ? parseNum(row[dc.balance]) : null,
       category:  null,
-      reference: dc.ref >= 0 ? cells[dc.ref] || null : null,
+      reference: dc.ref >= 0 ? str(row[dc.ref]) || null : null,
       notes:     null,
       account:   account, source: sourceFile, source_type: 'leumi_transactions'
     });
