@@ -50,7 +50,7 @@ function showView(name) {
   document.querySelector(`[data-view="${name}"]`)?.classList.add('active');
   if (name === 'transactions') renderTransactions();
   if (name === 'accounts') renderAccountsFull();
-  if (name === 'upload') loadUploads();
+  if (name === 'upload') { loadUploads(); loadAccountsMgmt(); }
 }
 
 // ── Wizard ────────────────────────────────────────────────────────────────────
@@ -762,6 +762,7 @@ async function doUpload(file) {
       transactions = await fetch('/api/transactions').then(r => r.json());
       renderDashboard();
       loadUploads();
+      loadAccountsMgmt();
       const skipped = data.stats?.skipped ?? (data.rows - data.inserted);
       const skippedNote = skipped > 0 ? ` (${skipped} שורות דולגו)` : '';
       const accountNote = data.detectedAccount ? `<br><span style="font-size:12px;opacity:.8">חשבון שזוהה: <strong>${data.detectedAccount}</strong></span>` : '';
@@ -787,6 +788,76 @@ function setupDrop() {
     const file = e.dataTransfer.files[0];
     if (file) await doUpload(file);
   });
+}
+
+// ── Account management ────────────────────────────────────────────────────────
+async function loadAccountsMgmt() {
+  const container = document.getElementById('accounts-mgmt-list');
+  const countEl   = document.getElementById('accounts-mgmt-count');
+  if (!container) return;
+
+  const accounts = await fetch('/api/accounts').then(r => r.json());
+  countEl.textContent = accounts.length ? `${accounts.length} חשבונות` : '';
+
+  if (!accounts.length) {
+    container.innerHTML = '<div class="empty-state">אין חשבונות — העלה מסמך תחילה</div>';
+    return;
+  }
+
+  container.innerHTML = `
+    <table class="uploads-table">
+      <thead><tr>
+        <th>שם נוכחי</th>
+        <th>עסקאות</th>
+        <th>תאריכים</th>
+        <th>שם חדש</th>
+        <th></th>
+      </tr></thead>
+      <tbody>
+        ${accounts.map(a => `
+          <tr data-account="${escAttr(a.account)}">
+            <td style="font-weight:500">${a.account}</td>
+            <td style="text-align:center;color:#666">${a.tx_count}</td>
+            <td style="font-size:12px;color:#999">${(a.date_from||'').substring(0,10)} — ${(a.date_to||'').substring(0,10)}</td>
+            <td><input class="acct-rename-input" type="text" placeholder="שם חדש..." value="" style="width:100%;padding:4px 8px;border:1px solid var(--border);border-radius:6px;font-size:13px"></td>
+            <td><button class="acct-rename-btn btn-secondary small" style="white-space:nowrap">שמור</button></td>
+          </tr>`).join('')}
+      </tbody>
+    </table>`;
+
+  container.querySelectorAll('tr[data-account]').forEach(row => {
+    row.querySelector('.acct-rename-btn').addEventListener('click', () => {
+      const from = row.dataset.account;
+      const to   = row.querySelector('.acct-rename-input').value.trim();
+      if (to) renameAccount(from, to);
+    });
+    row.querySelector('.acct-rename-input').addEventListener('keydown', e => {
+      if (e.key === 'Enter') row.querySelector('.acct-rename-btn').click();
+    });
+  });
+}
+
+function escAttr(s) {
+  return (s || '').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
+}
+
+async function renameAccount(from, to) {
+  try {
+    const res  = await fetch('/api/accounts/rename', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ from, to })
+    });
+    const data = await res.json();
+    if (data.ok) {
+      transactions = await fetch('/api/transactions').then(r => r.json());
+      renderDashboard();
+      loadAccountsMgmt();
+      loadUploads();
+    }
+  } catch (e) {
+    alert('שגיאה בשינוי שם: ' + e.message);
+  }
 }
 
 // ── Uploaded documents ────────────────────────────────────────────────────────

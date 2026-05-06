@@ -56,13 +56,41 @@ try {
 } catch {}
 
 // Tertiary dedup: (date, amount, balance, account) when balance present and no reference.
-// balance is a running total unique to each row position in the statement, so
-// date+amount+balance is an extremely strong fingerprint even without a reference.
 try {
   db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_tx_dedup_bal
            ON transactions(date, amount, balance, account)
            WHERE balance IS NOT NULL AND reference IS NULL`);
 } catch {}
+
+// ── Account aliases ───────────────────────────────────────────────────────────
+// Maps auto-detected account identifiers to user-defined display names.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS account_aliases (
+    detected TEXT PRIMARY KEY,
+    alias    TEXT NOT NULL,
+    updated_at TEXT
+  )
+`);
+
+const getAlias    = db.prepare('SELECT alias FROM account_aliases WHERE detected = ?');
+const upsertAlias = db.prepare(`
+  INSERT INTO account_aliases (detected, alias, updated_at)
+  VALUES (?, ?, ?)
+  ON CONFLICT(detected) DO UPDATE SET alias=excluded.alias, updated_at=excluded.updated_at
+`);
+
+function applyAliases(transactions) {
+  if (!transactions.length) return transactions;
+  // Build a set of unique raw account values in this batch
+  const unique = [...new Set(transactions.map(t => t.account).filter(Boolean))];
+  const map = {};
+  for (const raw of unique) {
+    const row = getAlias.get(raw);
+    if (row) map[raw] = row.alias;
+  }
+  if (!Object.keys(map).length) return transactions;
+  return transactions.map(t => ({ ...t, account: map[t.account] ?? t.account }));
+}
 
 // ── Multer ────────────────────────────────────────────────────────────────────
 app.use(express.json({ limit: '50mb' }));
@@ -129,6 +157,11 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
 
   const result = await parseFile(req.file.path, accountName);
 
+  // Apply user-defined account aliases before storing
+  if (result.type === 'transactions') {
+    result.transactions = applyAliases(result.transactions);
+  }
+
   // Profile-data files (balances, mortgage) → update profile.json, not transactions
   if (result.type === 'profile_data') {
     const existing = loadProfile() || {};
@@ -182,6 +215,38 @@ app.delete('/api/uploads/:filename', (req, res) => {
   const filename = decodeURIComponent(req.params.filename);
   const info = db.prepare('DELETE FROM transactions WHERE source_file = ?').run(filename);
   res.json({ ok: true, deleted: info.changes });
+});
+
+// ── Account management ────────────────────────────────────────────────────────
+app.get('/api/accounts', (req, res) => {
+  const rows = db.prepare(`
+    SELECT account, COUNT(*) AS tx_count,
+           MIN(date) AS date_from, MAX(date) AS date_to
+    FROM transactions
+    GROUP BY account
+    ORDER BY account
+  `).all();
+  // Attach alias info
+  const aliases = db.prepare('SELECT detected, alias FROM account_aliases').all();
+  const aliasMap = Object.fromEntries(aliases.map(a => [a.detected, a.alias]));
+  res.json(rows.map(r => ({ ...r, alias: aliasMap[r.account] || null })));
+});
+
+app.put('/api/accounts/rename', (req, res) => {
+  const { from, to } = req.body;
+  if (!from || !to || from === to) return res.status(400).json({ error: 'invalid' });
+
+  db.transaction(() => {
+    // Update all existing transactions
+    db.prepare('UPDATE transactions SET account = ? WHERE account = ?').run(to, from);
+    // Store mapping: the original "from" value → new alias
+    // Also remap any existing alias that pointed to "from"
+    upsertAlias.run(from, to, new Date().toISOString());
+    // If "from" itself was already an alias target of something else, update that too
+    db.prepare(`UPDATE account_aliases SET alias = ? WHERE alias = ?`).run(to, from);
+  })();
+
+  res.json({ ok: true });
 });
 
 app.get('/api/transactions', (req, res) => {
