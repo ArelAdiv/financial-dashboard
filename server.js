@@ -147,6 +147,26 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
   });
 });
 
+app.get('/api/uploads', (req, res) => {
+  const rows = db.prepare(`
+    SELECT source_file, account, source_type,
+           COUNT(*)       AS tx_count,
+           MIN(date)      AS date_from,
+           MAX(date)      AS date_to,
+           MAX(imported_at) AS imported_at
+    FROM transactions
+    GROUP BY source_file, account
+    ORDER BY MAX(imported_at) DESC
+  `).all();
+  res.json(rows);
+});
+
+app.delete('/api/uploads/:filename', (req, res) => {
+  const filename = decodeURIComponent(req.params.filename);
+  const info = db.prepare('DELETE FROM transactions WHERE source_file = ?').run(filename);
+  res.json({ ok: true, deleted: info.changes });
+});
+
 app.get('/api/transactions', (req, res) => {
   const account = req.query.account;
   const limit   = parseInt(req.query.limit) || 2000;
