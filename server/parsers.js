@@ -195,32 +195,54 @@ function parseGeneric(rows, accountName, sourceFile) {
 }
 
 // ── Poalim: Transactions ──────────────────────────────────────────────────────
-// Row 3: 'תנועות בחשבון'  Row 5 (idx 4): headers  Row 6+ (idx 5+): data
 function parsePoalimTransactions(rows, accountName, sourceFile) {
+  // Dynamically locate the header row (contains חובה + זכות/זיכוי)
+  let headerIdx = 4; // safe default
+  for (let i = 0; i < Math.min(rows.length, 10); i++) {
+    const line = rows[i].map(c => str(c)).join(' ');
+    if (line.includes('חובה') && (line.includes('זכות') || line.includes('זיכוי'))) {
+      headerIdx = i; break;
+    }
+  }
+
+  const hdrs = rows[headerIdx].map(c => str(c));
+  const ci = (keywords, def) => {
+    const idx = hdrs.findIndex(h => keywords.some(k => h.includes(k)));
+    return idx >= 0 ? idx : def;
+  };
+  const dateCol    = ci(['תאריך'], 0);
+  const descCol    = ci(['פעולה', 'תיאור'], 1);
+  const detailCol  = ci(['פרטים'], 2);
+  const refCol     = ci(['אסמכתא'], 3);
+  const debitCol   = ci(['חובה'], 4);
+  const creditCol  = ci(['זכות', 'זיכוי'], 5);
+  const balanceCol = ci(['יתרה'], 6);
+
+  console.log(`[poalim_tx] headerIdx=${headerIdx} cols: date=${dateCol} desc=${descCol} debit=${debitCol} credit=${creditCol} balance=${balanceCol}`);
+
   let found = 0, skipped = 0;
   const transactions = [];
 
-  for (const row of rows.slice(5)) {
+  for (const row of rows.slice(headerIdx + 1)) {
     found++;
-    const date = normalizeDate(row[0]);
+    const date = normalizeDate(row[dateCol]);
     if (!date) { skipped++; continue; }
     if (isSummaryRow(row)) { skipped++; continue; }
 
-    const debit  = parseNum(row[4]);  // חובה
-    const credit = parseNum(row[5]);  // זכות
+    const debit  = parseNum(row[debitCol]);
+    const credit = parseNum(row[creditCol]);
 
     if ((debit === null || debit === 0) && (credit === null || credit === 0)) { skipped++; continue; }
 
     const amount = (credit !== null && credit !== 0) ? Math.abs(credit) : -Math.abs(debit ?? 0);
 
-    // notes: concat columns C (idx 2), I (idx 8), J (idx 9)
-    const noteParts = [str(row[2]), str(row[8]), str(row[9])].filter(Boolean);
+    const noteParts = [str(row[detailCol]), str(row[8]), str(row[9])].filter(Boolean);
 
     transactions.push({
-      date, description: str(row[1]), amount,
-      balance:   parseNum(row[6]),
+      date, description: str(row[descCol]), amount,
+      balance:   parseNum(row[balanceCol]),
       category:  null,
-      reference: str(row[3]) || null,
+      reference: str(row[refCol]) || null,
       notes:     noteParts.join(' | ') || null,
       account:   accountName, source: sourceFile, source_type: 'poalim_transactions'
     });

@@ -750,7 +750,9 @@ async function doUpload(file) {
       transactions = await fetch('/api/transactions').then(r => r.json());
       renderDashboard();
       loadUploads();
-      let msg = `<div class="upload-success">✓ נטענו בהצלחה ${data.rows} שורות מ-${data.filename}</div>`;
+      const skipped = data.stats?.skipped ?? (data.rows - data.inserted);
+      const skippedNote = skipped > 0 ? ` (${skipped} שורות דולגו — כפילויות / שורות כותרת)` : '';
+      let msg = `<div class="upload-success">✓ נטענו בהצלחה ${data.inserted} שורות חדשות מ-${data.filename}${skippedNote}</div>`;
       if (data.warning) msg += `<div class="upload-warning" style="margin-top:8px">${data.warning}</div>`;
       status.innerHTML = msg;
     } else {
