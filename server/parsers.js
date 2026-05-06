@@ -8,15 +8,14 @@ const xlsx = require('xlsx');
 
 function parseNum(s) {
   if (s === null || s === undefined || s === '') return null;
-  const str = s.toString().trim();
-  if (!str) return null;
-  // Parentheses = negative: (1,234.56)
-  const inParens = /^\(([^)]+)\)$/.test(str);
-  const cleaned = str
+  const raw = s.toString().trim();
+  if (!raw) return null;
+  const inParens = /^\(([^)]+)\)$/.test(raw);
+  const cleaned = raw
     .replace(/^\(([^)]+)\)$/, '$1')
     .replace(/,/g, '')
     .replace(/\s/g, '')
-    .replace(/−/g, '-')   // Unicode minus sign
+    .replace(/−/g, '-')
     .replace(/[^\d.-]/g, '');
   const n = parseFloat(cleaned);
   if (isNaN(n)) return null;
@@ -25,14 +24,10 @@ function parseNum(s) {
 
 function normalizeDate(raw) {
   if (raw === null || raw === undefined || raw === '') return null;
-
-  // JS Date object (xlsx cellDates:true)
   if (raw instanceof Date) {
     if (isNaN(raw.getTime())) return null;
     return raw.toISOString().substring(0, 10);
   }
-
-  // Excel serial number
   if (typeof raw === 'number') {
     try {
       const d = xlsx.SSF.parse_date_code(raw);
@@ -41,29 +36,21 @@ function normalizeDate(raw) {
     } catch {}
     return null;
   }
-
   const s = raw.toString().trim();
   if (!s) return null;
-
-  // Already YYYY-MM-DD
   if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
-
-  // DD/MM/YYYY or DD-MM-YYYY or DD.MM.YYYY (4-digit year)
   let m = s.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})$/);
   if (m) return `${m[3]}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`;
-
-  // DD/MM/YY or DD.MM.YY (2-digit year)
   m = s.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2})$/);
   if (m) return `20${m[3]}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`;
-
   return null;
 }
 
 function isSummaryRow(row) {
   return row.some(c => {
-    const s = (c ?? '').toString();
-    return s.includes('סה"כ') || s.includes('סה״כ') ||
-           s.includes('סך הכל') || s.includes('סה״כ');
+    const s = (c ?? '').toString().trim();
+    return s === 'סה"כ' || s === 'סה״כ' || s === 'סך הכל' ||
+           s.startsWith('סה"כ') || s.startsWith('סה״כ') || s.startsWith('סך הכל');
   });
 }
 
@@ -86,16 +73,34 @@ function readExcelRows(filePath) {
 
 function str(v) { return (v ?? '').toString().trim(); }
 
+// ── Shared: dynamic header + column detection ─────────────────────────────────
+//
+// findHeader(rows, requiredKeywords, maxScan)
+//   Scans up to maxScan rows for the first row whose joined text contains
+//   ALL of the requiredKeywords.  Returns row index or -1.
+//
+// colIdx(headers, keywords, fallback)
+//   Returns the index of the first header cell that contains any keyword,
+//   or fallback if none found.
+
+function findHeader(rows, requiredKeywords, maxScan = 15) {
+  for (let i = 0; i < Math.min(rows.length, maxScan); i++) {
+    const line = rows[i].map(c => str(c)).join(' ');
+    if (requiredKeywords.every(kw => line.includes(kw))) return i;
+  }
+  return -1;
+}
+
+function colIdx(headers, keywords, fallback = -1) {
+  const i = headers.findIndex(h => keywords.some(k => str(h).includes(k)));
+  return i >= 0 ? i : fallback;
+}
+
 // ── File-type detection ───────────────────────────────────────────────────────
 
-/**
- * Returns source_type string based on file content.
- * Call after reading first rows (or detecting HTML).
- */
 function detectFileType(filePath, rows) {
   const ext = path.extname(filePath).toLowerCase();
 
-  // Leumi: XLS files that are actually HTML
   if ((ext === '.xls' || ext === '.xlsx') && isHtmlFile(filePath)) {
     try {
       const html = fs.readFileSync(filePath, 'utf8');
@@ -105,7 +110,6 @@ function detectFileType(filePath, rows) {
     } catch { return 'leumi_transactions'; }
   }
 
-  // Scan first 8 rows for known markers
   for (const row of rows.slice(0, 8)) {
     const line = row.map(c => str(c)).join(' ');
     if (line.includes('תנועות בחשבון'))              return 'poalim_transactions';
@@ -124,145 +128,127 @@ function detectFileType(filePath, rows) {
   return 'generic';
 }
 
-// ── Generic fallback (keeps existing header-detection logic) ──────────────────
+// ── Generic fallback ──────────────────────────────────────────────────────────
 
 const DATE_HDRS    = ['תאריך', 'date'];
-const DESC_HDRS    = ['תיאור פעולה', 'תיאור', 'פירוט', 'פרטים', 'description', 'name'];
+const DESC_HDRS    = ['תיאור פעולה', 'תיאור', 'פירוט', 'פרטים', 'description', 'name', 'פעולה'];
 const AMOUNT_HDRS  = ['סכום', 'amount'];
-const DEBIT_HDRS   = ['חיוב'];
-const CREDIT_HDRS  = ['זיכוי'];
+const DEBIT_HDRS   = ['חובה'];
+const CREDIT_HDRS  = ['זיכוי', 'זכות'];
 const BALANCE_HDRS = ['יתרה', 'balance'];
 const ALL_HDRS     = [...DATE_HDRS, ...DESC_HDRS, ...AMOUNT_HDRS, ...DEBIT_HDRS, ...CREDIT_HDRS, ...BALANCE_HDRS];
 
-function findHeaderRow(rows) {
+function parseGeneric(rows, accountName, sourceFile) {
+  if (rows.length < 2) return txResult([], 'generic', { found: 0, imported: 0, skipped: 0 });
+
+  // Find header row
+  let hi = 0;
   for (let i = 0; i < Math.min(rows.length, 15); i++) {
     const cells = rows[i].map(c => str(c).toLowerCase());
-    const hits  = cells.filter(c => ALL_HDRS.some(k => c.includes(k.toLowerCase())));
-    if (hits.length >= 2) return i;
+    if (cells.filter(c => ALL_HDRS.some(k => c.includes(k.toLowerCase()))).length >= 2) { hi = i; break; }
   }
-  return 0;
-}
 
-function detectCols(headers) {
-  const low = headers.map(h => str(h).toLowerCase());
-  const find = opts => {
-    const i = low.findIndex(h => opts.some(o => h.includes(o.toLowerCase())));
-    return i >= 0 ? i : null;
+  const hdrs = rows[hi].map(String);
+  const dc = {
+    date:    colIdx(hdrs, DATE_HDRS, 0),
+    desc:    colIdx(hdrs, DESC_HDRS, 1),
+    amount:  colIdx(hdrs, AMOUNT_HDRS, -1),
+    debit:   colIdx(hdrs, DEBIT_HDRS, -1),
+    credit:  colIdx(hdrs, CREDIT_HDRS, -1),
+    balance: colIdx(hdrs, BALANCE_HDRS, -1)
   };
-  return {
-    date: find(DATE_HDRS), description: find(DESC_HDRS),
-    amount: find(AMOUNT_HDRS), debit: find(DEBIT_HDRS),
-    credit: find(CREDIT_HDRS), balance: find(BALANCE_HDRS)
-  };
-}
 
-function parseGeneric(rows, accountName, sourceFile) {
-  if (rows.length < 2) return { type: 'transactions', transactions: [], sourceType: 'generic', stats: { found: 0, imported: 0, skipped: 0 } };
-  const hi   = findHeaderRow(rows);
-  const cols = detectCols(rows[hi].map(String));
   let found = 0, skipped = 0;
   const transactions = [];
 
   for (const row of rows.slice(hi + 1)) {
     found++;
-    const dateRaw = cols.date !== null ? row[cols.date] : row[0];
-    const date = normalizeDate(dateRaw);
+    const date = normalizeDate(row[dc.date]);
     if (!date) { skipped++; continue; }
     if (isSummaryRow(row)) { skipped++; continue; }
 
     let amount = 0;
-    if (cols.debit !== null || cols.credit !== null) {
-      const credit = parseNum(cols.credit !== null ? row[cols.credit] : '') ?? 0;
-      const debit  = parseNum(cols.debit  !== null ? row[cols.debit]  : '') ?? 0;
+    if (dc.debit >= 0 || dc.credit >= 0) {
+      const credit = dc.credit >= 0 ? parseNum(row[dc.credit]) ?? 0 : 0;
+      const debit  = dc.debit  >= 0 ? parseNum(row[dc.debit])  ?? 0 : 0;
       amount = credit - debit;
     } else {
-      amount = parseNum(cols.amount !== null ? row[cols.amount] : row[2]) ?? 0;
+      amount = parseNum(dc.amount >= 0 ? row[dc.amount] : row[2]) ?? 0;
     }
 
-    const desc = str(cols.description !== null ? row[cols.description] : row[1]) || str(row[2]);
+    const desc = str(dc.desc >= 0 ? row[dc.desc] : row[1]) || str(row[2]);
     if (!desc && amount === 0) { skipped++; continue; }
 
     transactions.push({
       date, description: desc, amount,
-      balance:     parseNum(cols.balance !== null ? row[cols.balance] : row[cols.debit !== null ? 4 : 3]),
-      category:    null, reference: null, notes: null,
-      account:     accountName, source: sourceFile, source_type: 'generic'
+      balance:     dc.balance >= 0 ? parseNum(row[dc.balance]) : null,
+      category: null, reference: null, notes: null,
+      account: accountName, source: sourceFile, source_type: 'generic'
     });
   }
 
-  console.log(`[generic] found=${found} imported=${transactions.length} skipped=${skipped}`);
-  return { type: 'transactions', transactions, sourceType: 'generic', stats: { found, imported: transactions.length, skipped } };
+  console.log(`[generic] headerIdx=${hi} found=${found} imported=${transactions.length} skipped=${skipped}`);
+  return txResult(transactions, 'generic', { found, imported: transactions.length, skipped });
 }
 
 // ── Poalim: Transactions ──────────────────────────────────────────────────────
 function parsePoalimTransactions(rows, accountName, sourceFile) {
-  // Dynamically locate the header row (contains חובה + זכות/זיכוי)
-  let headerIdx = 4; // safe default
-  for (let i = 0; i < Math.min(rows.length, 10); i++) {
-    const line = rows[i].map(c => str(c)).join(' ');
-    if (line.includes('חובה') && (line.includes('זכות') || line.includes('זיכוי'))) {
-      headerIdx = i; break;
-    }
+  const hi = findHeader(rows, ['חובה'], 10);
+  if (hi < 0) {
+    console.log('[poalim_tx] header not found, falling back to generic');
+    return parseGeneric(rows, accountName, sourceFile);
   }
 
-  const hdrs = rows[headerIdx].map(c => str(c));
-  const ci = (keywords, def) => {
-    const idx = hdrs.findIndex(h => keywords.some(k => h.includes(k)));
-    return idx >= 0 ? idx : def;
+  const hdrs = rows[hi].map(c => str(c));
+  const dc = {
+    date:    colIdx(hdrs, ['תאריך'], 0),
+    desc:    colIdx(hdrs, ['פעולה', 'תיאור'], 1),
+    detail:  colIdx(hdrs, ['פרטים'], 2),
+    ref:     colIdx(hdrs, ['אסמכתא'], 3),
+    debit:   colIdx(hdrs, ['חובה'], 4),
+    credit:  colIdx(hdrs, ['זכות', 'זיכוי'], 5),
+    balance: colIdx(hdrs, ['יתרה'], 6)
   };
-  const dateCol    = ci(['תאריך'], 0);
-  const descCol    = ci(['פעולה', 'תיאור'], 1);
-  const detailCol  = ci(['פרטים'], 2);
-  const refCol     = ci(['אסמכתא'], 3);
-  const debitCol   = ci(['חובה'], 4);
-  const creditCol  = ci(['זכות', 'זיכוי'], 5);
-  const balanceCol = ci(['יתרה'], 6);
-
-  console.log(`[poalim_tx] headerIdx=${headerIdx} cols: date=${dateCol} desc=${descCol} debit=${debitCol} credit=${creditCol} balance=${balanceCol}`);
+  console.log(`[poalim_tx] headerIdx=${hi} cols:`, dc);
 
   let found = 0, skipped = 0;
   const transactions = [];
 
-  for (const row of rows.slice(headerIdx + 1)) {
+  for (const row of rows.slice(hi + 1)) {
     found++;
-    const date = normalizeDate(row[dateCol]);
+    const date = normalizeDate(row[dc.date]);
     if (!date) { skipped++; continue; }
     if (isSummaryRow(row)) { skipped++; continue; }
 
-    const debit  = parseNum(row[debitCol]);
-    const credit = parseNum(row[creditCol]);
-
+    const debit  = parseNum(row[dc.debit]);
+    const credit = parseNum(row[dc.credit]);
     if ((debit === null || debit === 0) && (credit === null || credit === 0)) { skipped++; continue; }
 
     const amount = (credit !== null && credit !== 0) ? Math.abs(credit) : -Math.abs(debit ?? 0);
-
-    const noteParts = [str(row[detailCol]), str(row[8]), str(row[9])].filter(Boolean);
+    const noteParts = [str(row[dc.detail]), str(row[8]), str(row[9])].filter(Boolean);
 
     transactions.push({
-      date, description: str(row[descCol]), amount,
-      balance:   parseNum(row[balanceCol]),
+      date, description: str(row[dc.desc]), amount,
+      balance:   parseNum(row[dc.balance]),
       category:  null,
-      reference: str(row[refCol]) || null,
+      reference: str(row[dc.ref]) || null,
       notes:     noteParts.join(' | ') || null,
       account:   accountName, source: sourceFile, source_type: 'poalim_transactions'
     });
   }
 
   console.log(`[poalim_transactions] found=${found} imported=${transactions.length} skipped=${skipped}`);
-  return { type: 'transactions', transactions, sourceType: 'poalim_transactions', stats: { found, imported: transactions.length, skipped } };
+  return txResult(transactions, 'poalim_transactions', { found, imported: transactions.length, skipped });
 }
 
 // ── Poalim: Balances ──────────────────────────────────────────────────────────
-// Returns profile_data, not transactions
 function parsePoalimBalances(rows, accountName, sourceFile) {
   let checking_balance = null, credit_line = null, investments_total = null, report_date = null;
 
-  // Report date from row 4 (idx 3)
   const row3text = (rows[3] ?? []).map(str).join(' ');
   const dm = row3text.match(/(\d{1,2}[\/\.]\d{1,2}[\/\.]\d{2,4})/);
   if (dm) report_date = normalizeDate(dm[1]);
 
-  // עו"ש balance: first row containing עו"ש in rows 4–15
   for (let i = 4; i < Math.min(rows.length, 20); i++) {
     const line = rows[i].map(str).join(' ');
     if (line.includes('עו"ש') || line.includes('עוש')) {
@@ -272,7 +258,6 @@ function parsePoalimBalances(rows, accountName, sourceFile) {
     }
   }
 
-  // Investments total: first סה"כ row after 'השקעות' header
   let inInv = false;
   for (let i = 0; i < rows.length; i++) {
     const line = rows[i].map(str).join(' ');
@@ -289,16 +274,15 @@ function parsePoalimBalances(rows, accountName, sourceFile) {
 }
 
 // ── Poalim: Mortgage ──────────────────────────────────────────────────────────
-// Returns profile_data
 function parsePoalimMortgage(rows, accountName, sourceFile) {
+  const hi = findHeader(rows, ['מסלול', 'יתרה'], 10);
+  const startIdx = hi >= 0 ? hi + 1 : 5;
   const loans = [];
 
-  // Headers at row idx 4, data from idx 5
-  for (const row of rows.slice(5)) {
+  for (const row of rows.slice(startIdx)) {
     const loanId = str(row[0]);
     if (!loanId || loanId.length < 6) continue;
     if (isSummaryRow(row)) continue;
-
     loans.push({
       loan_id:    loanId,
       index_type: str(row[1]),
@@ -317,15 +301,13 @@ function parsePoalimMortgage(rows, accountName, sourceFile) {
 function parseLeumiTransactions(filePath, accountName, sourceFile) {
   const { parse } = require('node-html-parser');
   const raw  = fs.readFileSync(filePath);
-  // Try UTF-8; fall back to Windows-1255 via latin1 if garbled
   let html = raw.toString('utf8');
-  if (html.includes('?????') || html.includes('�')) html = raw.toString('latin1');
+  if (html.includes('?????') || html.includes('')) html = raw.toString('latin1');
 
   const root  = parse(html);
   const transactions = [];
   let found = 0, skipped = 0;
 
-  // Find the table that has תאריך + (חובה or זכות)
   let dataTable = null;
   for (const t of root.querySelectorAll('table')) {
     const text = t.text;
@@ -335,57 +317,58 @@ function parseLeumiTransactions(filePath, accountName, sourceFile) {
   }
   if (!dataTable) {
     console.log('[leumi_transactions] No data table found');
-    return { type: 'transactions', transactions: [], sourceType: 'leumi_transactions', stats: { found: 0, imported: 0, skipped: 0 } };
+    return txResult([], 'leumi_transactions', { found: 0, imported: 0, skipped: 0 });
   }
 
   const tRows = dataTable.querySelectorAll('tr');
 
-  // Locate header row
   let headerIdx = 0;
   for (let i = 0; i < tRows.length; i++) {
     if (tRows[i].text.includes('תאריך') && tRows[i].text.includes('תיאור')) { headerIdx = i; break; }
   }
 
   const headerCells = tRows[headerIdx].querySelectorAll('th,td').map(td => td.text.trim());
-  const ci = h => headerCells.findIndex(c => c.includes(h));
-  const colDate    = ci('תאריך');
-  const colDesc    = ci('תיאור');
-  const colDebit   = ci('חובה');
-  const colCredit  = ci('זכות');
-  const colBalance = ci('יתרה');
-  const colRef     = ci('אסמכתא');
+  const hci = h => headerCells.findIndex(c => c.includes(h));
+  const dc = {
+    date:    hci('תאריך'),
+    desc:    hci('תיאור'),
+    debit:   hci('חובה'),
+    credit:  hci('זכות'),
+    balance: hci('יתרה'),
+    ref:     hci('אסמכתא')
+  };
 
   for (let i = headerIdx + 1; i < tRows.length; i++) {
     found++;
     const cells = tRows[i].querySelectorAll('td').map(td => td.text.trim());
     if (cells.length < 3) { skipped++; continue; }
 
-    const date = normalizeDate(cells[colDate >= 0 ? colDate : 0]);
+    const date = normalizeDate(cells[dc.date >= 0 ? dc.date : 0]);
     if (!date) { skipped++; continue; }
     if (isSummaryRow(cells)) { skipped++; continue; }
 
-    const credit = colCredit >= 0 ? parseNum(cells[colCredit]) : null;
-    const debit  = colDebit  >= 0 ? parseNum(cells[colDebit])  : null;
+    const credit = dc.credit >= 0 ? parseNum(cells[dc.credit]) : null;
+    const debit  = dc.debit  >= 0 ? parseNum(cells[dc.debit])  : null;
 
     let amount = 0;
-    if (credit !== null && credit !== 0)      amount =  Math.abs(credit);
-    else if (debit !== null && debit !== 0)   amount = -Math.abs(debit);
+    if (credit !== null && credit !== 0)     amount =  Math.abs(credit);
+    else if (debit !== null && debit !== 0)  amount = -Math.abs(debit);
     else { skipped++; continue; }
 
     transactions.push({
       date,
-      description: cells[colDesc >= 0 ? colDesc : 1] ?? '',
+      description: cells[dc.desc >= 0 ? dc.desc : 1] ?? '',
       amount,
-      balance:   colBalance >= 0 ? parseNum(cells[colBalance]) : null,
+      balance:   dc.balance >= 0 ? parseNum(cells[dc.balance]) : null,
       category:  null,
-      reference: colRef >= 0 ? cells[colRef] || null : null,
+      reference: dc.ref >= 0 ? cells[dc.ref] || null : null,
       notes:     null,
       account:   accountName, source: sourceFile, source_type: 'leumi_transactions'
     });
   }
 
   console.log(`[leumi_transactions] found=${found} imported=${transactions.length} skipped=${skipped}`);
-  return { type: 'transactions', transactions, sourceType: 'leumi_transactions', stats: { found, imported: transactions.length, skipped } };
+  return txResult(transactions, 'leumi_transactions', { found, imported: transactions.length, skipped });
 }
 
 // ── Leumi: Balances (HTML-based XLS) ─────────────────────────────────────────
@@ -414,57 +397,93 @@ function parseLeumiBalances(filePath, accountName, sourceFile) {
 }
 
 // ── Isracard ──────────────────────────────────────────────────────────────────
-// Row 10 (idx 9): headers  Row 11+ (idx 10+): data
 function parseIsracard(rows, accountName, sourceFile) {
+  // Header row contains: תאריך + שם בית עסק + סכום
+  const hi = findHeader(rows, ['תאריך', 'בית עסק'], 15);
+  if (hi < 0) {
+    console.log('[isracard] header not found, falling back to generic');
+    return parseGeneric(rows, accountName, sourceFile);
+  }
+
+  const hdrs = rows[hi].map(c => str(c));
+  const dc = {
+    date:   colIdx(hdrs, ['תאריך עסקה', 'תאריך'], 0),
+    desc:   colIdx(hdrs, ['שם בית עסק', 'בית עסק', 'תיאור'], 1),
+    amount: colIdx(hdrs, ['סכום חיוב', 'סכום'], 4),
+    ref:    colIdx(hdrs, ['אסמכתא'], 6),
+    notes:  colIdx(hdrs, ['הערות', 'פרטים'], 7)
+  };
+  console.log(`[isracard] headerIdx=${hi} cols:`, dc);
+
   let found = 0, skipped = 0;
   const transactions = [];
 
-  for (const row of rows.slice(10)) {
+  for (const row of rows.slice(hi + 1)) {
     found++;
-    const date = normalizeDate(row[0]);
+    const date = normalizeDate(row[dc.date]);
     if (!date) { skipped++; continue; }
     if (isSummaryRow(row)) { skipped++; continue; }
 
-    const amountRaw = parseNum(row[4]);  // סכום חיוב בש"ח
+    const amountRaw = parseNum(row[dc.amount]);
     if (amountRaw === null) { skipped++; continue; }
 
     transactions.push({
-      date, description: str(row[1]),
+      date, description: str(row[dc.desc]),
       amount:    -Math.abs(amountRaw),
       balance:   null,
       category:  null,
-      reference: str(row[6]) || null,
-      notes:     str(row[7]) || null,
+      reference: dc.ref >= 0 ? str(row[dc.ref]) || null : null,
+      notes:     dc.notes >= 0 ? str(row[dc.notes]) || null : null,
       account:   accountName, source: sourceFile, source_type: 'isracard_cc'
     });
   }
 
   console.log(`[isracard_cc] found=${found} imported=${transactions.length} skipped=${skipped}`);
-  return { type: 'transactions', transactions, sourceType: 'isracard_cc', stats: { found, imported: transactions.length, skipped } };
+  return txResult(transactions, 'isracard_cc', { found, imported: transactions.length, skipped });
 }
 
 // ── Max ───────────────────────────────────────────────────────────────────────
-// Rows 1-3: metadata  Row 4 (idx 3): headers  Row 5+ (idx 4+): data
 function parseMax(rows, accountName, sourceFile) {
+  // Header row contains: תאריך + קטגוריה + סכום
+  const hi = findHeader(rows, ['תאריך', 'סכום'], 15);
+  if (hi < 0) {
+    console.log('[max] header not found, falling back to generic');
+    return parseGeneric(rows, accountName, sourceFile);
+  }
+
+  const hdrs = rows[hi].map(c => str(c));
+  const dc = {
+    date:     colIdx(hdrs, ['תאריך עסקה', 'תאריך'], 0),
+    desc:     colIdx(hdrs, ['שם בית עסק', 'בית עסק', 'תיאור'], 1),
+    category: colIdx(hdrs, ['קטגוריה'], 2),
+    amount:   colIdx(hdrs, ['סכום חיוב', 'סכום'], 5),
+    notes1:   colIdx(hdrs, ['פרטים', 'הערות'], -1),
+    notes2:   colIdx(hdrs, ['מטבע עסקה'], -1)
+  };
+  console.log(`[max] headerIdx=${hi} cols:`, dc);
+
   let found = 0, skipped = 0;
   const transactions = [];
 
-  for (const row of rows.slice(4)) {
+  for (const row of rows.slice(hi + 1)) {
     found++;
     if (isSummaryRow(row)) { skipped++; continue; }
-    const date = normalizeDate(row[0]);
+    const date = normalizeDate(row[dc.date]);
     if (!date) { skipped++; continue; }
 
-    const amountRaw = parseNum(row[5]);  // סכום חיוב
+    const amountRaw = parseNum(row[dc.amount]);
     if (amountRaw === null || amountRaw === 0) { skipped++; continue; }
 
-    const noteParts = [str(row[4]), str(row[10]), str(row[14])].filter(Boolean);
+    const noteParts = [
+      dc.notes1 >= 0 ? str(row[dc.notes1]) : '',
+      dc.notes2 >= 0 ? str(row[dc.notes2]) : ''
+    ].filter(Boolean);
 
     transactions.push({
-      date, description: str(row[1]),
+      date, description: str(row[dc.desc]),
       amount:    -Math.abs(amountRaw),
       balance:   null,
-      category:  str(row[2]) || null,
+      category:  dc.category >= 0 ? str(row[dc.category]) || null : null,
       reference: null,
       notes:     noteParts.join(' | ') || null,
       account:   accountName, source: sourceFile, source_type: 'max_cc'
@@ -472,41 +491,55 @@ function parseMax(rows, accountName, sourceFile) {
   }
 
   console.log(`[max_cc] found=${found} imported=${transactions.length} skipped=${skipped}`);
-  return { type: 'transactions', transactions, sourceType: 'max_cc', stats: { found, imported: transactions.length, skipped } };
+  return txResult(transactions, 'max_cc', { found, imported: transactions.length, skipped });
 }
 
 // ── Cal ───────────────────────────────────────────────────────────────────────
-// Row 1: header  Row 3: billing date  Row 4 (idx 3): headers  Row 5+ (idx 4+): data
 function parseCal(rows, accountName, sourceFile) {
+  // Header row contains: תאריך + סכום
+  const hi = findHeader(rows, ['תאריך', 'סכום'], 15);
+  if (hi < 0) {
+    console.log('[cal] header not found, falling back to generic');
+    return parseGeneric(rows, accountName, sourceFile);
+  }
+
+  const hdrs = rows[hi].map(c => str(c));
+  const dc = {
+    date:     colIdx(hdrs, ['תאריך עסקה', 'תאריך'], 0),
+    desc:     colIdx(hdrs, ['שם בית עסק', 'בית עסק', 'תיאור'], 1),
+    amount:   colIdx(hdrs, ['סכום חיוב', 'סכום בש"ח', 'סכום'], 3),
+    category: colIdx(hdrs, ['ענף', 'קטגוריה'], 5),
+    notes:    colIdx(hdrs, ['פרטים', 'הערות'], -1)
+  };
+  console.log(`[cal] headerIdx=${hi} cols:`, dc);
+
   let found = 0, skipped = 0;
   const transactions = [];
 
-  for (const row of rows.slice(4)) {
+  for (const row of rows.slice(hi + 1)) {
     found++;
-    const date = normalizeDate(row[0]);
+    const date = normalizeDate(row[dc.date]);
     if (!date) { skipped++; continue; }
     if (isSummaryRow(row)) { skipped++; continue; }
 
-    const amountRaw = parseNum(row[3]);  // סכום חיוב
+    const amountRaw = parseNum(row[dc.amount]);
     if (amountRaw === null) { skipped++; continue; }
 
-    // description: col B, fall back to col F (ענף) if empty
-    const desc = str(row[1]) || str(row[5]);
-    const noteParts = [str(row[4]), str(row[6])].filter(Boolean);
+    const desc = str(row[dc.desc]) || (dc.category >= 0 ? str(row[dc.category]) : '');
 
     transactions.push({
       date, description: desc,
       amount:    -Math.abs(amountRaw),
       balance:   null,
-      category:  str(row[5]) || null,
+      category:  dc.category >= 0 ? str(row[dc.category]) || null : null,
       reference: null,
-      notes:     noteParts.join(' | ') || null,
+      notes:     dc.notes >= 0 ? str(row[dc.notes]) || null : null,
       account:   accountName, source: sourceFile, source_type: 'cal_cc'
     });
   }
 
   console.log(`[cal_cc] found=${found} imported=${transactions.length} skipped=${skipped}`);
-  return { type: 'transactions', transactions, sourceType: 'cal_cc', stats: { found, imported: transactions.length, skipped } };
+  return txResult(transactions, 'cal_cc', { found, imported: transactions.length, skipped });
 }
 
 // ── PDF fallback ──────────────────────────────────────────────────────────────
@@ -515,49 +548,57 @@ async function parsePdf(filePath, accountName, sourceFile) {
     const pdfParse = require('pdf-parse');
     const pdfData  = await pdfParse(fs.readFileSync(filePath));
     const lines    = pdfData.text.split('\n').map(l => l.trim()).filter(Boolean);
-    if (lines.length < 2) {
-      return { type: 'transactions', transactions: [], warning: PDF_WARNING, sourceType: 'pdf' };
-    }
+    if (lines.length < 2)
+      return txResult([], 'pdf', {}, PDF_WARNING);
+
     const transactions = lines.slice(1).map(line => {
       const parts = line.split(/\s{2,}|\t/);
-      const amount = parseNum(parts[2] ?? '0') ?? 0;
-      const date   = normalizeDate(parts[0]);
+      const date  = normalizeDate(parts[0]);
       if (!date) return null;
-      return { date, description: parts[1] || line, amount, balance: parseNum(parts[3] ?? '0'),
-               category: null, reference: null, notes: null,
-               account: accountName, source: sourceFile, source_type: 'pdf' };
+      return {
+        date, description: parts[1] || line,
+        amount:  parseNum(parts[2] ?? '0') ?? 0,
+        balance: parseNum(parts[3] ?? '0'),
+        category: null, reference: null, notes: null,
+        account: accountName, source: sourceFile, source_type: 'pdf'
+      };
     }).filter(Boolean);
 
-    if (!transactions.length)
-      return { type: 'transactions', transactions: [], warning: PDF_WARNING, sourceType: 'pdf' };
-
+    if (!transactions.length) return txResult([], 'pdf', {}, PDF_WARNING);
     console.log(`[pdf] imported=${transactions.length}`);
-    return { type: 'transactions', transactions, sourceType: 'pdf' };
+    return txResult(transactions, 'pdf');
   } catch {
-    return { type: 'transactions', transactions: [], warning: PDF_WARNING, sourceType: 'pdf' };
+    return txResult([], 'pdf', {}, PDF_WARNING);
   }
 }
 
 const PDF_WARNING = 'PDF זה עובד רק על קבצים דיגיטליים (לא סרוקים). אם הנתונים לא נוצרו כראוי, נסה לייצא כ-CSV מהאתר.';
 
-// ── Main entry point ──────────────────────────────────────────────────────────
+// ── Helper: build transaction result ─────────────────────────────────────────
+function txResult(transactions, sourceType, stats = {}, warning = null) {
+  return {
+    type: 'transactions',
+    transactions,
+    sourceType,
+    stats: { found: stats.found ?? transactions.length, imported: stats.imported ?? transactions.length, skipped: stats.skipped ?? 0 },
+    ...(warning ? { warning } : {})
+  };
+}
 
+// ── Main entry point ──────────────────────────────────────────────────────────
 async function parseFile(filePath, accountName) {
   const ext        = path.extname(filePath).toLowerCase();
   const sourceFile = path.basename(filePath);
 
   try {
-    // PDF
     if (ext === '.pdf') return parsePdf(filePath, accountName, sourceFile);
 
-    // HTML-disguised XLS (Leumi)
     if ((ext === '.xls' || ext === '.xlsx') && isHtmlFile(filePath)) {
       const html = fs.readFileSync(filePath, 'utf8');
       if (html.includes('פירוט יתרות')) return parseLeumiBalances(filePath, accountName, sourceFile);
       return parseLeumiTransactions(filePath, accountName, sourceFile);
     }
 
-    // Read rows
     let rows = [];
     if (ext === '.xlsx' || ext === '.xls') {
       rows = readExcelRows(filePath);
@@ -583,7 +624,7 @@ async function parseFile(filePath, accountName) {
     }
   } catch (e) {
     console.error(`[parseFile] Error:`, e.message);
-    return { type: 'transactions', transactions: [], error: e.message, sourceType: 'error' };
+    return txResult([], 'error', {}, e.message);
   }
 }
 
