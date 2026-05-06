@@ -43,12 +43,19 @@ db.exec(`
   try { db.exec(`ALTER TABLE transactions ADD COLUMN ${col}`); } catch {}
 });
 
-// Deduplication index — safe to create even if some duplicates exist (just skips)
+// Primary dedup: by (date, description, amount, account) — catches rows without a reference
 try {
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_tx_dedup ON transactions(date, description, amount, account)');
-} catch {
-  // Table already has duplicates from before this index existed — that's OK
-}
+} catch {}
+
+// Secondary dedup: by (date, amount, account, reference) when reference is present.
+// Partial index fires only when reference is non-null and non-empty, so it catches
+// re-uploads from overlapping date ranges even when description wording differs.
+try {
+  db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_tx_dedup_ref
+           ON transactions(date, amount, account, reference)
+           WHERE reference IS NOT NULL AND reference != ''`);
+} catch {}
 
 // ── Multer ────────────────────────────────────────────────────────────────────
 app.use(express.json({ limit: '50mb' }));

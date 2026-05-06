@@ -722,11 +722,14 @@ function filterTransactions() {
     const credit = t.amount > 0  ? Math.round(t.amount).toLocaleString('he-IL')  : '';
     const debit  = t.amount < 0  ? Math.round(-t.amount).toLocaleString('he-IL') : '';
     const bal    = t.balance != null ? Math.round(t.balance).toLocaleString('he-IL') : '—';
+    const srcFile = (t.source_file || t.source || '').replace(/^\d+_/, '');
     return `
     <tr>
       <td class="tx-date">${fmtDate(t.date)}</td>
       <td>${t.description || '—'}</td>
       <td class="tx-doc">${t.account || ''}</td>
+      <td class="tx-doc">${srcFile}</td>
+      <td class="tx-ref">${t.reference || ''}</td>
       <td class="tx-num tx-credit">${credit}</td>
       <td class="tx-num tx-debit">${debit}</td>
       <td class="tx-num tx-bal">${bal}</td>
