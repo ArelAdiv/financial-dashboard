@@ -56,11 +56,16 @@ function isSummaryRow(row) {
 
 function isHtmlFile(filePath) {
   try {
-    const buf = Buffer.alloc(10);
+    const buf = Buffer.alloc(20);
     const fd = fs.openSync(filePath, 'r');
-    fs.readSync(fd, buf, 0, 10, 0);
+    fs.readSync(fd, buf, 0, 20, 0);
     fs.closeSync(fd);
-    const sig = buf.toString('latin1').toLowerCase().trim();
+    // Skip UTF-8 BOM (EF BB BF) or UTF-16 BOM if present
+    let offset = 0;
+    if (buf[0] === 0xEF && buf[1] === 0xBB && buf[2] === 0xBF) offset = 3;
+    else if (buf[0] === 0xFF && buf[1] === 0xFE) offset = 2;
+    else if (buf[0] === 0xFE && buf[1] === 0xFF) offset = 2;
+    const sig = buf.slice(offset, offset + 10).toString('latin1').toLowerCase().trimStart();
     return sig.startsWith('<html') || sig.startsWith('<!doc');
   } catch { return false; }
 }
@@ -176,7 +181,7 @@ function detectFileType(filePath, rows) {
 
   if ((ext === '.xls' || ext === '.xlsx') && isHtmlFile(filePath)) {
     try {
-      const html = fs.readFileSync(filePath, 'utf8');
+      const html = readLeumiHtml(filePath);
       if (html.includes('תנועות בחשבון')) return 'leumi_transactions';
       if (html.includes('פירוט יתרות'))   return 'leumi_balances';
       return 'leumi_transactions';
@@ -372,45 +377,69 @@ function parsePoalimMortgage(rows, accountName, sourceFile) {
 }
 
 // ── Leumi: Transactions (HTML-based XLS) ──────────────────────────────────────
+function readLeumiHtml(filePath) {
+  const raw = fs.readFileSync(filePath);
+  // Check for BOM and strip it
+  let offset = 0;
+  if (raw[0] === 0xEF && raw[1] === 0xBB && raw[2] === 0xBF) offset = 3;
+
+  // Try UTF-8 first; fall back to Windows-1255 (latin1 approximation) only if
+  // the decoded text contains the Unicode replacement character U+FFFD
+  const utf8 = raw.slice(offset).toString('utf8');
+  if (!utf8.includes('�')) return utf8;
+
+  // File is not valid UTF-8 — re-read as latin1 (covers Windows-1255 for Hebrew)
+  return raw.slice(offset).toString('latin1');
+}
+
 function parseLeumiTransactions(filePath, accountName, sourceFile) {
   const { parse } = require('node-html-parser');
-  const raw  = fs.readFileSync(filePath);
-  let html = raw.toString('utf8');
-  if (html.includes('?????') || html.includes('')) html = raw.toString('latin1');
+  const html = readLeumiHtml(filePath);
+
+  console.log(`[leumi_tx] html length=${html.length} hasTable=${html.includes('<table')}`);
 
   const account = resolveAccount(extractLeumiAccountId(html), accountName, sourceFile);
   const root  = parse(html);
   const transactions = [];
   let found = 0, skipped = 0;
 
+  // Find the data table: contains date column AND debit/credit columns
+  // Support multiple Hebrew variants of column names
   let dataTable = null;
   for (const t of root.querySelectorAll('table')) {
     const text = t.text;
-    if (text.includes('תאריך') && (text.includes('חובה') || text.includes('זכות'))) {
+    if (text.includes('תאריך') && (
+        text.includes('חובה') || text.includes('זכות') ||
+        text.includes('חיוב') || text.includes('זיכוי'))) {
       dataTable = t; break;
     }
   }
   if (!dataTable) {
-    console.log('[leumi_transactions] No data table found');
+    console.log('[leumi_transactions] No data table found — tables:', root.querySelectorAll('table').length);
     return txResult([], 'leumi_transactions', { found: 0, imported: 0, skipped: 0 });
   }
 
   const tRows = dataTable.querySelectorAll('tr');
 
+  // Find header row — look for date + any description variant
   let headerIdx = 0;
   for (let i = 0; i < tRows.length; i++) {
-    if (tRows[i].text.includes('תאריך') && tRows[i].text.includes('תיאור')) { headerIdx = i; break; }
+    const t = tRows[i].text;
+    if (t.includes('תאריך') && (t.includes('תיאור') || t.includes('פרטים') || t.includes('תאור'))) {
+      headerIdx = i; break;
+    }
   }
 
   const headerCells = tRows[headerIdx].querySelectorAll('th,td').map(td => td.text.trim());
-  const hci = h => headerCells.findIndex(c => c.includes(h));
+  console.log(`[leumi_tx] headerIdx=${headerIdx} cols:`, headerCells);
+  const hci = (...keys) => headerCells.findIndex(c => keys.some(k => c.includes(k)));
   const dc = {
     date:    hci('תאריך'),
-    desc:    hci('תיאור'),
-    debit:   hci('חובה'),
-    credit:  hci('זכות'),
+    desc:    hci('תיאור', 'תאור', 'פרטים', 'פעולה'),
+    debit:   hci('חובה', 'חיוב'),
+    credit:  hci('זכות', 'זיכוי'),
     balance: hci('יתרה'),
-    ref:     hci('אסמכתא')
+    ref:     hci('אסמכתא', 'מסמך')
   };
 
   for (let i = headerIdx + 1; i < tRows.length; i++) {
@@ -449,7 +478,7 @@ function parseLeumiTransactions(filePath, accountName, sourceFile) {
 // ── Leumi: Balances (HTML-based XLS) ─────────────────────────────────────────
 function parseLeumiBalances(filePath, accountName, sourceFile) {
   const { parse } = require('node-html-parser');
-  const html = fs.readFileSync(filePath, 'utf8');
+  const html = readLeumiHtml(filePath);
   const root = parse(html);
 
   let checking_balance = null, report_date = null;
@@ -669,7 +698,7 @@ async function parseFile(filePath, accountName) {
     if (ext === '.pdf') return parsePdf(filePath, accountName, sourceFile);
 
     if ((ext === '.xls' || ext === '.xlsx') && isHtmlFile(filePath)) {
-      const html = fs.readFileSync(filePath, 'utf8');
+      const html = readLeumiHtml(filePath);
       if (html.includes('פירוט יתרות')) return parseLeumiBalances(filePath, accountName, sourceFile);
       return parseLeumiTransactions(filePath, accountName, sourceFile);
     }
