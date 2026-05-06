@@ -706,6 +706,7 @@ function filterTransactions() {
   let filtered = transactions;
   if (acct) filtered = filtered.filter(t => t.account === acct);
   if (search) filtered = filtered.filter(t => (t.description || '').toLowerCase().includes(search));
+  filtered = [...filtered].sort((a, b) => (b.date || '').localeCompare(a.date || '') || b.id - a.id);
 
   const body = document.getElementById('tx-body');
   const empty = document.getElementById('tx-empty');
@@ -716,13 +717,14 @@ function filterTransactions() {
     return;
   }
   empty.style.display = 'none';
+  const fmtDate = d => d ? d.substring(8,10) + '/' + d.substring(5,7) + '/' + d.substring(0,4) : '—';
   body.innerHTML = filtered.slice(0, 500).map(t => {
     const credit = t.amount > 0  ? Math.round(t.amount).toLocaleString('he-IL')  : '';
     const debit  = t.amount < 0  ? Math.round(-t.amount).toLocaleString('he-IL') : '';
     const bal    = t.balance != null ? Math.round(t.balance).toLocaleString('he-IL') : '—';
     return `
     <tr>
-      <td class="tx-date">${t.date || '—'}</td>
+      <td class="tx-date">${fmtDate(t.date)}</td>
       <td>${t.description || '—'}</td>
       <td class="tx-doc">${t.account || ''}</td>
       <td class="tx-num tx-credit">${credit}</td>
