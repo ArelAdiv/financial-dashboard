@@ -377,30 +377,47 @@ function parsePoalimMortgage(rows, accountName, sourceFile) {
 }
 
 // ── Leumi: Transactions (HTML-based XLS) ──────────────────────────────────────
-// Simple regex-based HTML table → rows[][].
-// Used as last-resort fallback when xlsx cannot parse the file.
-function parseHtmlTableRows(html) {
+// Parses HTML into separate tables (array of arrays of rows).
+// This lets us pick the transaction table instead of a navigation/header table.
+function parseHtmlTables(html) {
   const decodeEntities = s => s
     .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
     .replace(/&nbsp;/g, ' ').replace(/&quot;/g, '"')
     .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(+n));
   const stripTags = s => s.replace(/<[^>]+>/g, '');
 
-  const rows = [];
-  const trRe = /<tr[\s\S]*?<\/tr>/gi;
-  const cellRe = /<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi;
+  const tables = [];
+  const tableRe = /<table[\s\S]*?<\/table>/gi;
+  const trRe    = /<tr[\s\S]*?<\/tr>/gi;
+  const cellRe  = /<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi;
 
-  let tr;
-  while ((tr = trRe.exec(html)) !== null) {
-    const cells = [];
-    let m;
-    const cr = new RegExp(cellRe.source, 'gi');
-    while ((m = cr.exec(tr[0])) !== null) {
-      cells.push(decodeEntities(stripTags(m[1])).trim());
+  let tbl;
+  while ((tbl = tableRe.exec(html)) !== null) {
+    const rows = [];
+    const trMatch = new RegExp(trRe.source, 'gi');
+    let tr;
+    while ((tr = trMatch.exec(tbl[0])) !== null) {
+      const cells = [];
+      const cr = new RegExp(cellRe.source, 'gi');
+      let m;
+      while ((m = cr.exec(tr[0])) !== null) {
+        cells.push(decodeEntities(stripTags(m[1])).trim());
+      }
+      if (cells.some(c => c)) rows.push(cells);
     }
-    if (cells.some(c => c)) rows.push(cells);
+    if (rows.length) tables.push(rows);
   }
-  return rows;
+  return tables;
+}
+
+// Pick the table whose rows contain all of the given keywords (joined).
+function findTableWithKeywords(tables, keywords) {
+  for (const table of tables) {
+    const joined = table.map(r => r.join(' ')).join(' ');
+    if (keywords.every(kw => joined.includes(kw))) return table;
+  }
+  // Fallback: largest table
+  return tables.reduce((best, t) => t.length > best.length ? t : best, []);
 }
 
 function readLeumiHtml(filePath) {
@@ -422,32 +439,31 @@ function parseLeumiTransactions(filePath, accountName, sourceFile) {
   const html = readLeumiHtml(filePath);
   const account = resolveAccount(extractLeumiAccountId(html), accountName, sourceFile);
 
-  // Method 1: xlsx.readFile (handles SpreadsheetML / Office XML natively)
-  let rows;
-  try {
-    rows = readExcelRows(filePath);
-    console.log(`[leumi_tx] method=xlsx.readFile rows=${rows.length} first=${JSON.stringify(rows[0])}`);
-  } catch (e) {
-    console.log('[leumi_tx] xlsx.readFile failed:', e.message);
-    rows = [];
+  // ── Method 1: per-table HTML regex — pick the table with תאריך ──────────
+  let rows = [];
+  const tables = parseHtmlTables(html);
+  console.log(`[leumi_tx] html tables found: ${tables.length}, sizes: ${tables.map(t => t.length).join(', ')}`);
+
+  const txTable = findTableWithKeywords(tables, ['תאריך']);
+  if (txTable.length >= 2) {
+    rows = txTable;
+    console.log(`[leumi_tx] method=html-table rows=${rows.length} first=${JSON.stringify(rows[0])}`);
   }
 
-  // Method 2: regex HTML table parser (works on any plain HTML)
-  if (rows.length < 3) {
-    const regexRows = parseHtmlTableRows(html);
-    console.log(`[leumi_tx] method=regex rows=${regexRows.length} first=${JSON.stringify(regexRows[0])}`);
-    if (regexRows.length > rows.length) rows = regexRows;
-  }
-
-  // Method 3: xlsx.read as string (last resort)
+  // ── Method 2: xlsx.readFile — pick sheet containing תאריך ────────────────
   if (rows.length < 3) {
     try {
-      const wb = xlsx.read(html, { type: 'string' });
-      const ws = wb.Sheets[wb.SheetNames[0]];
-      const strRows = xlsx.utils.sheet_to_json(ws, { header: 1, defval: '', raw: false });
-      console.log(`[leumi_tx] method=xlsx.string rows=${strRows.length} first=${JSON.stringify(strRows[0])}`);
-      if (strRows.length > rows.length) rows = strRows;
-    } catch (e) { console.log('[leumi_tx] xlsx.string failed:', e.message); }
+      const wb = xlsx.readFile(filePath, { cellDates: false, raw: false });
+      for (const name of wb.SheetNames) {
+        const ws = wb.Sheets[name];
+        const r = xlsx.utils.sheet_to_json(ws, { header: 1, defval: '', raw: false });
+        const joined = r.map(row => row.join(' ')).join(' ');
+        if (joined.includes('תאריך') && r.length > rows.length) rows = r;
+      }
+      console.log(`[leumi_tx] method=xlsx.readFile rows=${rows.length}`);
+    } catch (e) {
+      console.log('[leumi_tx] xlsx.readFile failed:', e.message);
+    }
   }
 
   console.log(`[leumi_tx] final rows=${rows.length}`);
