@@ -396,17 +396,21 @@ function parseLeumiTransactions(filePath, accountName, sourceFile) {
   const html = readLeumiHtml(filePath);
   const account = resolveAccount(extractLeumiAccountId(html), accountName, sourceFile);
 
-  // Use xlsx to parse the HTML/Office-XML content directly — more robust
-  // than DOM parsing for the Office XML format Leumi exports
+  // Read via xlsx.readFile — handles Office XML natively regardless of extension
   let rows;
   try {
-    const wb = xlsx.read(html, { type: 'string' });
-    const ws = wb.Sheets[wb.SheetNames[0]];
-    rows = xlsx.utils.sheet_to_json(ws, { header: 1, defval: '', raw: false });
+    rows = readExcelRows(filePath);
   } catch (e) {
-    console.log('[leumi_tx] xlsx parse failed:', e.message);
-    return txResult([], 'leumi_transactions', { found: 0, imported: 0, skipped: 0 },
-      'לא ניתן לנתח את קובץ לאומי: ' + e.message);
+    // Last-resort fallback: parse HTML as a string spreadsheet
+    try {
+      const wb = xlsx.read(html, { type: 'string' });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      rows = xlsx.utils.sheet_to_json(ws, { header: 1, defval: '', raw: false });
+    } catch (e2) {
+      console.log('[leumi_tx] all parse methods failed:', e2.message);
+      return txResult([], 'leumi_transactions', { found: 0, imported: 0, skipped: 0 },
+        'לא ניתן לנתח את קובץ לאומי: ' + e2.message);
+    }
   }
 
   console.log(`[leumi_tx] rows=${rows.length}`);
@@ -469,22 +473,28 @@ function parseLeumiTransactions(filePath, accountName, sourceFile) {
 
 // ── Leumi: Balances (HTML-based XLS) ─────────────────────────────────────────
 function parseLeumiBalances(filePath, accountName, sourceFile) {
-  const { parse } = require('node-html-parser');
-  const html = readLeumiHtml(filePath);
-  const root = parse(html);
+  let rows;
+  try {
+    rows = readExcelRows(filePath);
+  } catch (e) {
+    const html = readLeumiHtml(filePath);
+    try {
+      const wb = xlsx.read(html, { type: 'string' });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      rows = xlsx.utils.sheet_to_json(ws, { header: 1, defval: '', raw: false });
+    } catch { rows = []; }
+  }
 
   let checking_balance = null, report_date = null;
 
-  for (const t of root.querySelectorAll('table')) {
-    for (const row of t.querySelectorAll('tr')) {
-      const text = row.text;
-      if (text.includes('עו"ש') || text.includes('עוש')) {
-        const cells = row.querySelectorAll('td').map(td => td.text.trim());
-        for (const c of cells) {
-          const n = parseNum(c);
-          if (n !== null && n !== 0) { checking_balance = n; break; }
-        }
+  for (const row of rows) {
+    const line = row.map(c => str(c)).join(' ');
+    if (line.includes('עו"ש') || line.includes('עוש')) {
+      for (const cell of row) {
+        const n = parseNum(cell);
+        if (n !== null && n !== 0) { checking_balance = n; break; }
       }
+      if (checking_balance !== null) break;
     }
   }
 
