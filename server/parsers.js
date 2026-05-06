@@ -484,8 +484,11 @@ function parseLeumiTransactions(filePath, accountName, sourceFile) {
 
   console.log(`[leumi_tx] final rows=${rows.length}`);
 
-  // Dynamic header + column detection (same pattern as all other parsers)
-  const hi = findHeader(rows, ['תאריך'], 20);
+  // Dynamic header + column detection — require multiple column keywords so we
+  // skip metadata rows like "תאריך שמירה/הדפסה: ..." and land on the real header
+  let hi = findHeader(rows, ['תאריך', 'חובה'], 40);
+  if (hi < 0) hi = findHeader(rows, ['תאריך', 'יתרה'], 40);
+  if (hi < 0) hi = findHeader(rows, ['תאריך', 'זכות'], 40);
   if (hi < 0) {
     console.log('[leumi_tx] header row not found');
     return txResult([], 'leumi_transactions', { found: 0, imported: 0, skipped: 0 });
