@@ -377,6 +377,32 @@ function parsePoalimMortgage(rows, accountName, sourceFile) {
 }
 
 // ── Leumi: Transactions (HTML-based XLS) ──────────────────────────────────────
+// Simple regex-based HTML table → rows[][].
+// Used as last-resort fallback when xlsx cannot parse the file.
+function parseHtmlTableRows(html) {
+  const decodeEntities = s => s
+    .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+    .replace(/&nbsp;/g, ' ').replace(/&quot;/g, '"')
+    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(+n));
+  const stripTags = s => s.replace(/<[^>]+>/g, '');
+
+  const rows = [];
+  const trRe = /<tr[\s\S]*?<\/tr>/gi;
+  const cellRe = /<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi;
+
+  let tr;
+  while ((tr = trRe.exec(html)) !== null) {
+    const cells = [];
+    let m;
+    const cr = new RegExp(cellRe.source, 'gi');
+    while ((m = cr.exec(tr[0])) !== null) {
+      cells.push(decodeEntities(stripTags(m[1])).trim());
+    }
+    if (cells.some(c => c)) rows.push(cells);
+  }
+  return rows;
+}
+
 function readLeumiHtml(filePath) {
   const raw = fs.readFileSync(filePath);
   // Check for BOM and strip it
@@ -396,24 +422,35 @@ function parseLeumiTransactions(filePath, accountName, sourceFile) {
   const html = readLeumiHtml(filePath);
   const account = resolveAccount(extractLeumiAccountId(html), accountName, sourceFile);
 
-  // Read via xlsx.readFile — handles Office XML natively regardless of extension
+  // Method 1: xlsx.readFile (handles SpreadsheetML / Office XML natively)
   let rows;
   try {
     rows = readExcelRows(filePath);
+    console.log(`[leumi_tx] method=xlsx.readFile rows=${rows.length} first=${JSON.stringify(rows[0])}`);
   } catch (e) {
-    // Last-resort fallback: parse HTML as a string spreadsheet
+    console.log('[leumi_tx] xlsx.readFile failed:', e.message);
+    rows = [];
+  }
+
+  // Method 2: regex HTML table parser (works on any plain HTML)
+  if (rows.length < 3) {
+    const regexRows = parseHtmlTableRows(html);
+    console.log(`[leumi_tx] method=regex rows=${regexRows.length} first=${JSON.stringify(regexRows[0])}`);
+    if (regexRows.length > rows.length) rows = regexRows;
+  }
+
+  // Method 3: xlsx.read as string (last resort)
+  if (rows.length < 3) {
     try {
       const wb = xlsx.read(html, { type: 'string' });
       const ws = wb.Sheets[wb.SheetNames[0]];
-      rows = xlsx.utils.sheet_to_json(ws, { header: 1, defval: '', raw: false });
-    } catch (e2) {
-      console.log('[leumi_tx] all parse methods failed:', e2.message);
-      return txResult([], 'leumi_transactions', { found: 0, imported: 0, skipped: 0 },
-        'לא ניתן לנתח את קובץ לאומי: ' + e2.message);
-    }
+      const strRows = xlsx.utils.sheet_to_json(ws, { header: 1, defval: '', raw: false });
+      console.log(`[leumi_tx] method=xlsx.string rows=${strRows.length} first=${JSON.stringify(strRows[0])}`);
+      if (strRows.length > rows.length) rows = strRows;
+    } catch (e) { console.log('[leumi_tx] xlsx.string failed:', e.message); }
   }
 
-  console.log(`[leumi_tx] rows=${rows.length}`);
+  console.log(`[leumi_tx] final rows=${rows.length}`);
 
   // Dynamic header + column detection (same pattern as all other parsers)
   const hi = findHeader(rows, ['תאריך'], 20);
