@@ -50,6 +50,7 @@ function showView(name) {
   document.querySelector(`[data-view="${name}"]`)?.classList.add('active');
   if (name === 'transactions') renderTransactions();
   if (name === 'accounts') renderAccountsFull();
+  if (name === 'upload') loadUploads();
 }
 
 // ── Wizard ────────────────────────────────────────────────────────────────────
@@ -748,6 +749,7 @@ async function doUpload(file) {
     if (data.ok) {
       transactions = await fetch('/api/transactions').then(r => r.json());
       renderDashboard();
+      loadUploads();
       let msg = `<div class="upload-success">✓ נטענו בהצלחה ${data.rows} שורות מ-${data.filename}</div>`;
       if (data.warning) msg += `<div class="upload-warning" style="margin-top:8px">${data.warning}</div>`;
       status.innerHTML = msg;
@@ -770,6 +772,81 @@ function setupDrop() {
     const file = e.dataTransfer.files[0];
     if (file) await doUpload(file);
   });
+}
+
+// ── Uploaded documents ────────────────────────────────────────────────────────
+async function loadUploads() {
+  const container = document.getElementById('uploads-list');
+  const countEl = document.getElementById('uploads-count');
+  if (!container) return;
+
+  try {
+    const rows = await fetch('/api/uploads').then(r => r.json());
+    countEl.textContent = rows.length ? `${rows.length} קבצים` : '';
+
+    if (!rows.length) {
+      container.innerHTML = '<div class="empty-state">לא הועלו מסמכים עדיין</div>';
+      return;
+    }
+
+    const sourceTypeLabel = t => ({
+      poalim_transactions: 'פועלים — עסקאות',
+      poalim_balances: 'פועלים — יתרות',
+      poalim_mortgage: 'פועלים — משכנתא',
+      leumi_transactions: 'לאומי — עסקאות',
+      leumi_balances: 'לאומי — יתרות',
+      isracard: 'ישראכרט',
+      max: 'מקס',
+      cal: 'כאל',
+      generic: 'כללי'
+    })[t] || t || '—';
+
+    const fmtDate = d => d ? d.substring(0, 10) : '—';
+
+    container.innerHTML = `
+      <table class="uploads-table">
+        <thead>
+          <tr>
+            <th>שם קובץ</th>
+            <th>חשבון</th>
+            <th>סוג</th>
+            <th>עסקאות</th>
+            <th>תאריכים</th>
+            <th>הועלה</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.map(r => `
+            <tr>
+              <td class="uploads-filename" title="${r.source_file || ''}">${(r.source_file || '').replace(/^\d+_/, '')}</td>
+              <td>${r.account || '—'}</td>
+              <td>${sourceTypeLabel(r.source_type)}</td>
+              <td style="text-align:center">${r.tx_count}</td>
+              <td style="font-size:12px;color:#666">${fmtDate(r.date_from)} — ${fmtDate(r.date_to)}</td>
+              <td style="font-size:12px;color:#999">${fmtDate(r.imported_at)}</td>
+              <td><button class="remove-upload-btn" onclick="removeUpload(${JSON.stringify(r.source_file)})">הסר</button></td>
+            </tr>`).join('')}
+        </tbody>
+      </table>`;
+  } catch (e) {
+    container.innerHTML = `<div class="upload-error">שגיאה בטעינת רשימה: ${e.message}</div>`;
+  }
+}
+
+async function removeUpload(filename) {
+  if (!confirm(`להסיר את הקובץ "${filename.replace(/^\d+_/, '')}" וכל עסקאותיו?`)) return;
+  try {
+    const res = await fetch('/api/uploads/' + encodeURIComponent(filename), { method: 'DELETE' });
+    const data = await res.json();
+    if (data.ok) {
+      transactions = await fetch('/api/transactions').then(r => r.json());
+      renderDashboard();
+      loadUploads();
+    }
+  } catch (e) {
+    alert('שגיאה בהסרת הקובץ: ' + e.message);
+  }
 }
 
 // ── AI Agent ──────────────────────────────────────────────────────────────────
