@@ -48,13 +48,20 @@ try {
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_tx_dedup ON transactions(date, description, amount, account)');
 } catch {}
 
-// Secondary dedup: by (date, amount, account, reference) when reference is present.
-// Partial index fires only when reference is non-null and non-empty, so it catches
-// re-uploads from overlapping date ranges even when description wording differs.
+// Secondary dedup: (date, amount, account, reference) when reference present.
 try {
   db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_tx_dedup_ref
            ON transactions(date, amount, account, reference)
            WHERE reference IS NOT NULL AND reference != ''`);
+} catch {}
+
+// Tertiary dedup: (date, amount, balance, account) when balance present and no reference.
+// balance is a running total unique to each row position in the statement, so
+// date+amount+balance is an extremely strong fingerprint even without a reference.
+try {
+  db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_tx_dedup_bal
+           ON transactions(date, amount, balance, account)
+           WHERE balance IS NOT NULL AND reference IS NULL`);
 } catch {}
 
 // ── Multer ────────────────────────────────────────────────────────────────────
