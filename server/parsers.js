@@ -886,122 +886,122 @@ function parseCal(rows, accountName, sourceFile) {
 }
 
 // ── Poalim: DailyBalances.xlsx ────────────────────────────────────────────────
-// Structured snapshot file with sections: חשבונות שוטפים / השקעות / אשראי / משכנתאות
+// Structured snapshot file: חשבונות שוטפים / השקעות / אשראי / משכנתאות
 function parsePoalimDailyBalances(rows, accountName, sourceFile) {
-  // Find section start rows by header keyword
   let checkingIdx = -1, investIdx = -1, creditIdx = -1, mortgageIdx = -1;
   for (let i = 0; i < rows.length; i++) {
     const line = rows[i].map(str).join(' ');
     if (checkingIdx < 0 && line.includes('חשבונות שוטפים')) checkingIdx = i;
-    else if (investIdx   < 0 && line.includes('השקעות'))         investIdx   = i;
-    else if (creditIdx   < 0 && line.includes('אשראי'))          creditIdx   = i;
+    else if (investIdx   < 0 && line.includes('השקעות'))      investIdx   = i;
+    else if (creditIdx   < 0 && line.includes('אשראי'))       creditIdx   = i;
     else if (mortgageIdx < 0 && (line.includes('משכנתאות') || line.includes('משכנתא'))) mortgageIdx = i;
   }
 
   let report_date = null;
 
-  // Helper: scan rows[from..to] and return first data row matching predicate
-  const scanSection = (from, to, fn) => {
+  // Skip metadata and column-header rows
+  const isMetaRow = (cells) => {
+    const line = cells.join(' ');
+    if (line.includes('מספר חשבון') || line.includes('תאריך הפקה')) return true;
+    return cells.some(c => c === 'סוג' || c === 'נכון ליום' || c.startsWith('יתרה') || c === 'מסגרת');
+  };
+
+  // Read a number from a specific column; reject date strings like '05.05.2026'
+  const cellNum = (cells, idx) => {
+    if (idx < 0 || idx >= cells.length) return null;
+    const v = cells[idx];
+    if (!v) return null;
+    if (normalizeDate(v) !== null) return null;
+    return parseNum(v);
+  };
+
+  // Find יתרה + מסגרת column indices from the section header row
+  const sectionCols = (from, to) => {
     for (let i = from + 1; i < Math.min(to, rows.length); i++) {
       const cells = rows[i].map(str);
-      if (!cells[0] || cells[0].length < 2) continue;
-      if (isSummaryRow(rows[i])) continue;
-      const res = fn(cells, rows[i]);
-      if (res !== undefined) return res;
+      const balIdx = cells.findIndex(c => c.startsWith('יתרה'));
+      if (balIdx >= 0)
+        return { balance: balIdx, creditLine: cells.findIndex(c => c.includes('מסגרת')), date: cells.findIndex(c => c.includes('נכון')) };
     }
-    return null;
+    return { balance: -1, creditLine: -1, date: -1 };
   };
 
-  const scanSectionTotal = (from, to) => {
-    for (let i = from + 1; i < Math.min(to, rows.length); i++) {
-      if (!isSummaryRow(rows[i])) continue;
-      const nums = rows[i].map(str).map(parseNum).filter(n => n !== null && n !== 0);
-      if (nums.length) return nums[nums.length - 1];
-    }
-    return null;
-  };
-
-  // ── Section 1: Checking ──────────────────────────────────────────────────
+  // ── Section 1: Checking ──────────────────────────────────────────────────────
   let checking = null, credit_line = null;
   const checkEnd = investIdx > 0 ? investIdx : rows.length;
-  scanSection(checkingIdx, checkEnd, (cells) => {
-    if (!(cells[0].includes('עו"ש') || cells[0].includes('עוש'))) return undefined;
-    // Date from col 1
-    if (!report_date) report_date = normalizeDate(cells[1]);
-    const nums = cells.map(parseNum).filter(n => n !== null);
-    if (nums.length >= 2) { credit_line = nums[nums.length - 2]; checking = nums[nums.length - 1]; }
-    else if (nums.length === 1) { checking = nums[0]; }
-    return true;
-  });
-  // Also try to get date from header cols even if no match above
-  if (!report_date) {
-    for (let i = checkingIdx; i < Math.min(checkEnd, checkingIdx + 6); i++) {
-      const cells = rows[i].map(str);
-      for (const c of cells) { const d = normalizeDate(c); if (d) { report_date = d; break; } }
-      if (report_date) break;
+  const cc = sectionCols(checkingIdx, checkEnd);
+  for (let i = checkingIdx + 1; i < checkEnd; i++) {
+    const cells = rows[i].map(str);
+    if (!cells[0] || cells[0].length < 2) continue;
+    if (isMetaRow(cells) || isSummaryRow(rows[i])) continue;
+    if (!report_date && cc.date >= 0) report_date = normalizeDate(cells[cc.date]);
+    if (cells[0].includes('עו"ש') || cells[0].includes('עוש')) {
+      checking    = cellNum(cells, cc.balance);
+      credit_line = cellNum(cells, cc.creditLine);
     }
   }
 
-  // ── Section 2: Investments ───────────────────────────────────────────────
+  // ── Section 2: Investments ───────────────────────────────────────────────────
   let inv_deposits = null, inv_pri = null, inv_total = null;
   const investEnd = creditIdx > 0 ? creditIdx : (mortgageIdx > 0 ? mortgageIdx : rows.length);
   if (investIdx >= 0) {
-    scanSection(investIdx, investEnd, (cells) => {
-      const nums = cells.map(parseNum).filter(n => n !== null && n !== 0);
-      if (!nums.length) return undefined;
-      const bal = nums[nums.length - 1];
-      if (cells[0].includes('פיקדון'))                           inv_deposits = bal;
-      else if (cells[0].includes('פר"י') || cells[0].includes("פר'י") || /פר.?י/.test(cells[0])) inv_pri = bal;
-      return undefined; // keep scanning
-    });
-    inv_total = scanSectionTotal(investIdx, investEnd);
+    const ic = sectionCols(investIdx, investEnd);
+    for (let i = investIdx + 1; i < investEnd; i++) {
+      const cells = rows[i].map(str);
+      if (!cells[0] || cells[0].length < 2) continue;
+      if (isMetaRow(cells)) continue;
+      if (!report_date && ic.date >= 0) report_date = normalizeDate(cells[ic.date]);
+      if (isSummaryRow(rows[i])) {
+        inv_total = cellNum(cells, ic.balance);
+      } else if (cells[0].includes(פיקדון)) {
+        inv_deposits = cellNum(cells, ic.balance);
+      } else if (cells[0].includes('פר"י') || cells[0].includes("פר'י") || /פר.?י/.test(cells[0])) {
+        inv_pri = cellNum(cells, ic.balance);
+      }
+    }
     if (inv_total === null && (inv_deposits !== null || inv_pri !== null))
       inv_total = (inv_deposits ?? 0) + (inv_pri ?? 0);
   }
 
-  // ── Section 3: Credit card debt ─────────────────────────────────────────
+  // ── Section 3: Credit-card debt ─────────────────────────────────────────────
   let credit_card_debt = null;
   const creditEnd = mortgageIdx > 0 ? mortgageIdx : rows.length;
   if (creditIdx >= 0) {
-    scanSection(creditIdx, creditEnd, (cells) => {
-      const nums = cells.map(parseNum).filter(n => n !== null && n !== 0);
-      if (!nums.length) return undefined;
-      credit_card_debt = nums[nums.length - 1];
-      return true;
-    });
+    const xc = sectionCols(creditIdx, creditEnd);
+    for (let i = creditIdx + 1; i < creditEnd; i++) {
+      const cells = rows[i].map(str);
+      if (!cells[0] || cells[0].length < 2) continue;
+      if (isMetaRow(cells) || isSummaryRow(rows[i])) continue;
+      const bal = cellNum(cells, xc.balance);
+      if (bal !== null && bal !== 0) { credit_card_debt = bal; break; }
+    }
   }
 
-  // ── Section 4: Mortgage ─────────────────────────────────────────────────
+  // ── Section 4: Mortgage ─────────────────────────────────────────────────────
   let mortgage = null;
   if (mortgageIdx >= 0) {
-    scanSection(mortgageIdx, rows.length, (cells) => {
-      const nums = cells.map(parseNum).filter(n => n !== null && n !== 0);
-      if (!nums.length) return undefined;
-      mortgage = -Math.abs(nums[nums.length - 1]); // always negative (debt)
-      return true;
-    });
+    const mc = sectionCols(mortgageIdx, rows.length);
+    for (let i = mortgageIdx + 1; i < Math.min(rows.length, mortgageIdx + 15); i++) {
+      const cells = rows[i].map(str);
+      if (!cells[0] || cells[0].length < 2) continue;
+      if (isMetaRow(cells) || isSummaryRow(rows[i])) continue;
+      const bal = cellNum(cells, mc.balance);
+      if (bal !== null && bal !== 0) { mortgage = -Math.abs(bal); break; }
+    }
   }
 
   const net_worth =
-    (checking    !== null || inv_total !== null || mortgage !== null)
+    (checking !== null || inv_total !== null || mortgage !== null)
       ? (checking ?? 0) + (inv_total ?? 0) + (mortgage ?? 0)
       : null;
 
-  const live_balances = {
-    report_date,
-    checking,
-    credit_line,
+  const live_balances = { report_date, checking, credit_line,
     investments: { deposits: inv_deposits, pri: inv_pri, total: inv_total },
-    credit_card_debt,
-    mortgage,
-    net_worth
-  };
+    credit_card_debt, mortgage, net_worth };
 
   console.log('[poalim_daily_balances]', live_balances);
-  return {
-    type: 'profile_data', profileKey: 'live_balances',
-    profileData: live_balances, sourceType: 'poalim_daily_balances'
-  };
+  return { type: 'profile_data', profileKey: 'live_balances',
+           profileData: live_balances, sourceType: 'poalim_daily_balances' };
 }
 
 // ── PDF fallback ──────────────────────────────────────────────────────────────
