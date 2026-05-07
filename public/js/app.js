@@ -660,7 +660,8 @@ function renderLiveBalances() {
   const investPri         = lb.investments?.pri ?? null;
   const investTotalRaw    = lb.investments?.total ?? null;
   // Use stored total as the ground truth; derive deposits when not parsed directly
-  const investTotal    = investTotalRaw ?? ((investDepositsRaw ?? 0) + (investPri ?? 0)) || null;
+  const _invSum = (investDepositsRaw ?? 0) + (investPri ?? 0);
+  const investTotal    = investTotalRaw ?? (_invSum > 0 ? _invSum : null);
   const investDeposits = investDepositsRaw ?? (investTotal !== null && investPri !== null ? investTotal - investPri : null);
   if (investTotal !== null || investDeposits !== null || investPri !== null) {
     html += '<div class="lb-section">';
