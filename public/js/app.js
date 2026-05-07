@@ -1053,15 +1053,16 @@ async function loadUploads() {
     }
 
     const sourceTypeLabel = t => ({
-      poalim_transactions: 'פועלים — עסקאות',
-      poalim_balances: 'פועלים — יתרות',
-      poalim_mortgage: 'פועלים — משכנתא',
-      leumi_transactions: 'לאומי — עסקאות',
-      leumi_balances: 'לאומי — יתרות',
-      isracard: 'ישראכרט',
-      max: 'מקס',
-      cal: 'כאל',
-      generic: 'כללי'
+      poalim_transactions:   'פועלים — עסקאות',
+      poalim_balances:       'פועלים — יתרות',
+      poalim_mortgage:       'פועלים — משכנתא',
+      poalim_daily_balances: 'פועלים — יתרות יומיות',
+      leumi_transactions:    'לאומי — עסקאות',
+      leumi_balances:        'לאומי — יתרות',
+      isracard_cc:           'ישראכרט',
+      max_cc:                'מקס',
+      cal_cc:                'כאל',
+      generic:               'כללי'
     })[t] || t || '—';
 
     const fmtDate = d => d ? d.substring(0, 10) : '—';
@@ -1080,36 +1081,56 @@ async function loadUploads() {
           </tr>
         </thead>
         <tbody>
-          ${rows.map(r => `
+          ${rows.map(r => {
+            const sfSafe = (r.source_file || '').replace(/&/g,'&amp;').replace(/"/g,'&quot;');
+            const isProfile = !!r.profile_key;
+            const txCell = isProfile
+              ? `<td style="text-align:center;color:#999">—</td>`
+              : `<td style="text-align:center">${r.tx_count}</td>`;
+            const dateCell = isProfile
+              ? `<td style="font-size:12px;color:#999">—</td>`
+              : `<td style="font-size:12px;color:#666">${fmtDate(r.date_from)} — ${fmtDate(r.date_to)}</td>`;
+            return `
             <tr>
               <td class="uploads-filename" title="${r.source_file || ''}">${(r.source_file || '').replace(/^\d+_/, '')}</td>
               <td>${r.account || '—'}</td>
               <td>${sourceTypeLabel(r.source_type)}</td>
-              <td style="text-align:center">${r.tx_count}</td>
-              <td style="font-size:12px;color:#666">${fmtDate(r.date_from)} — ${fmtDate(r.date_to)}</td>
+              ${txCell}
+              ${dateCell}
               <td style="font-size:12px;color:#999">${fmtDate(r.imported_at)}</td>
-              <td><button class="remove-upload-btn" data-file="${(r.source_file || '').replace(/&/g,'&amp;').replace(/"/g,'&quot;')}">הסר</button></td>
-            </tr>`).join('')}
+              <td><button class="remove-upload-btn" data-file="${sfSafe}" data-is-profile="${isProfile}">הסר</button></td>
+            </tr>`;
+          }).join('')}
         </tbody>
       </table>`;
 
     container.querySelectorAll('.remove-upload-btn').forEach(btn => {
-      btn.addEventListener('click', () => removeUpload(btn.dataset.file));
+      btn.addEventListener('click', () => removeUpload(btn.dataset.file, btn.dataset.isProfile === 'true'));
     });
   } catch (e) {
     container.innerHTML = `<div class="upload-error">שגיאה בטעינת רשימה: ${e.message}</div>`;
   }
 }
 
-async function removeUpload(filename) {
-  if (!confirm(`להסיר את הקובץ "${filename.replace(/^\d+_/, '')}" וכל עסקאותיו?`)) return;
+async function removeUpload(filename, isProfile = false) {
+  const displayName = filename.replace(/^\d+_/, '');
+  const msg = isProfile
+    ? `להסיר את קובץ היתרות "${displayName}" ואת הנתונים שנטענו ממנו?`
+    : `להסיר את הקובץ "${displayName}" וכל עסקאותיו?`;
+  if (!confirm(msg)) return;
   try {
     const res = await fetch('/api/uploads/' + encodeURIComponent(filename), { method: 'DELETE' });
     const data = await res.json();
     if (data.ok) {
-      transactions = await fetch('/api/transactions').then(r => r.json());
+      if (data.isProfile) {
+        // Refresh profile so dashboard hides the removed balance card
+        profile = await fetch('/api/profile').then(r => r.json());
+      } else {
+        transactions = await fetch('/api/transactions').then(r => r.json());
+      }
       renderDashboard();
       loadUploads();
+      loadAccountsMgmt();
     }
   } catch (e) {
     alert('שגיאה בהסרת הקובץ: ' + e.message);

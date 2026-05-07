@@ -72,6 +72,18 @@ db.exec(`
   )
 `);
 
+// ── Profile uploads ────────────────────────────────────────────────────────────
+// Tracks non-transaction files (balance reports, mortgage) so they can be listed
+// and removed from the UI just like transaction files.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS profile_uploads (
+    filename    TEXT PRIMARY KEY,
+    profile_key TEXT NOT NULL,
+    source_type TEXT NOT NULL,
+    imported_at TEXT NOT NULL
+  )
+`);
+
 const getAlias    = db.prepare('SELECT alias FROM account_aliases WHERE detected = ?');
 const upsertAlias = db.prepare(`
   INSERT INTO account_aliases (detected, alias, updated_at)
@@ -179,6 +191,13 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
 
     existing.updatedAt = new Date().toISOString();
     saveProfile(existing);
+
+    // Record in profile_uploads so the file appears in the uploads list and can be removed
+    db.prepare(`
+      INSERT OR REPLACE INTO profile_uploads (filename, profile_key, source_type, imported_at)
+      VALUES (?, ?, ?, ?)
+    `).run(req.file.filename, result.profileKey, result.sourceType, new Date().toISOString());
+
     const accountCount = result.profileData?.accounts?.length ?? 0;
     return res.json({
       ok: true,
@@ -211,23 +230,56 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
 });
 
 app.get('/api/uploads', (req, res) => {
-  const rows = db.prepare(`
+  const txRows   = db.prepare(`
     SELECT source_file, account, source_type,
-           COUNT(*)       AS tx_count,
-           MIN(date)      AS date_from,
-           MAX(date)      AS date_to,
-           MAX(imported_at) AS imported_at
+           COUNT(*)         AS tx_count,
+           MIN(date)        AS date_from,
+           MAX(date)        AS date_to,
+           MAX(imported_at) AS imported_at,
+           NULL             AS profile_key
     FROM transactions
     GROUP BY source_file, account
-    ORDER BY MAX(imported_at) DESC
   `).all();
-  res.json(rows);
+
+  const profRows = db.prepare(`
+    SELECT filename AS source_file, NULL AS account, source_type,
+           0 AS tx_count, NULL AS date_from, NULL AS date_to,
+           imported_at, profile_key
+    FROM profile_uploads
+  `).all();
+
+  const all = [...txRows, ...profRows]
+    .sort((a, b) => (b.imported_at || '').localeCompare(a.imported_at || ''));
+  res.json(all);
 });
 
 app.delete('/api/uploads/:filename', (req, res) => {
   const filename = decodeURIComponent(req.params.filename);
+
+  // Profile upload?
+  const profRow = db.prepare('SELECT * FROM profile_uploads WHERE filename = ?').get(filename);
+  if (profRow) {
+    db.prepare('DELETE FROM profile_uploads WHERE filename = ?').run(filename);
+
+    const existing = loadProfile() || {};
+    if (profRow.profile_key === 'balance_snapshot') {
+      // Remove only accounts from this source so other banks' data survives
+      if (existing.balance_snapshot?.accounts) {
+        existing.balance_snapshot.accounts = existing.balance_snapshot.accounts
+          .filter(a => a.source !== profRow.source_type);
+        if (!existing.balance_snapshot.accounts.length) delete existing.balance_snapshot;
+      }
+    } else {
+      delete existing[profRow.profile_key];
+    }
+    existing.updatedAt = new Date().toISOString();
+    saveProfile(existing);
+    return res.json({ ok: true, deleted: 1, isProfile: true });
+  }
+
+  // Transaction upload
   const info = db.prepare('DELETE FROM transactions WHERE source_file = ?').run(filename);
-  res.json({ ok: true, deleted: info.changes });
+  res.json({ ok: true, deleted: info.changes, isProfile: false });
 });
 
 // ── Account management ────────────────────────────────────────────────────────
