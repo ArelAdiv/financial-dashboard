@@ -541,13 +541,41 @@ function renderDashboard() {
   const netWorth = totalAssets - totalLiab;
   const monthlySavings = monthlyIncome - monthlyExpenses;
 
-  document.getElementById('m-assets').textContent = totalAssets ? fmt(totalAssets) : '₪ —';
-  document.getElementById('m-liab').textContent = totalLiab ? fmt(totalLiab) : '₪ —';
-  document.getElementById('m-net').textContent = (totalAssets || totalLiab) ? fmt(netWorth) : '₪ —';
-  document.getElementById('m-net').className = 'metric-value ' + (netWorth >= 0 ? 'green' : 'red');
   document.getElementById('m-income').textContent = monthlyIncome ? fmt(monthlyIncome) : '₪ —';
   document.getElementById('m-loans').textContent = monthlyExpenses ? fmt(monthlyExpenses) : '₪ —';
-  document.getElementById('m-saving').textContent = (monthlyIncome || monthlyExpenses) ? fmt(monthlySavings) : '₪ —';
+
+  const lb = profile?.live_balances;
+  if (lb) {
+    const investTotal = (lb.investments?.deposits ?? 0) + (lb.investments?.pri ?? 0);
+    const lbAssets = (lb.checking ?? 0) + investTotal;
+    const lbLiab = Math.abs(lb.mortgage ?? 0) + Math.abs(lb.credit_card_debt ?? 0);
+    const lbNet = lb.net_worth ?? (lbAssets - lbLiab);
+
+    document.getElementById('m-assets').textContent = fmt(lbAssets);
+    document.getElementById('m-liab').textContent = fmt(lbLiab);
+    document.getElementById('m-net').textContent = fmt(lbNet);
+    document.getElementById('m-net').className = 'metric-value ' + (lbNet >= 0 ? 'green' : 'red');
+
+    document.getElementById('m-saving-label').textContent = 'סה״כ השקעות';
+    document.getElementById('m-saving-sub').textContent = 'פיקדונות + פר"י';
+    document.getElementById('m-saving').textContent = fmt(investTotal);
+    document.getElementById('m-saving').className = 'metric-value green';
+
+    renderLiveBalances();
+    renderBalanceSnapshot();
+    renderPieChart(lb.checking ?? 0, investTotal, lbLiab);
+  } else {
+    document.getElementById('m-assets').textContent = totalAssets ? fmt(totalAssets) : '₪ —';
+    document.getElementById('m-liab').textContent = totalLiab ? fmt(totalLiab) : '₪ —';
+    document.getElementById('m-net').textContent = (totalAssets || totalLiab) ? fmt(netWorth) : '₪ —';
+    document.getElementById('m-net').className = 'metric-value ' + (netWorth >= 0 ? 'green' : 'red');
+
+    document.getElementById('m-saving-label').textContent = 'חיסכון חודשי';
+    document.getElementById('m-saving-sub').textContent = 'הפרש הכנסות-הוצאות';
+    document.getElementById('m-saving').textContent = (monthlyIncome || monthlyExpenses) ? fmt(monthlySavings) : '₪ —';
+    document.getElementById('m-saving').className = 'metric-value';
+
+  }
 
   renderAccountSection('dash-banks', (profile.banks || []).map(b => ({
     icon: '🏦', name: b.bank,
@@ -573,9 +601,6 @@ function renderDashboard() {
     balance: null, detail: l.lender || ''
   })));
 
-  renderLiveBalances();
-  renderBalanceSnapshot();
-  renderPieChart(totalAssets, 0, totalLiab);
 }
 
 function renderAccountSection(id, items) {
@@ -628,12 +653,15 @@ function renderLiveBalances() {
   html += '</div>';
 
   // השקעות
-  if (lb.investments?.total !== null && lb.investments?.total !== undefined) {
+  const investDeposits = lb.investments?.deposits ?? null;
+  const investPri      = lb.investments?.pri ?? null;
+  const investTotal    = (investDeposits ?? 0) + (investPri ?? 0);
+  if (investDeposits !== null || investPri !== null) {
     html += '<div class="lb-section">';
     html += '<div class="lb-section-title">📈 השקעות</div>';
-    if (lb.investments.deposits !== null) html += row('פיקדונות', lb.investments.deposits, 'pos', true);
-    if (lb.investments.pri     !== null) html += row('פר"י',      lb.investments.pri,      'pos', true);
-    html += row('סה"כ', lb.investments.total, 'pos', false);
+    if (investDeposits !== null) html += row('פיקדונות', investDeposits, 'pos', true);
+    if (investPri     !== null) html += row('פר"י',      investPri,      'pos', true);
+    html += row('סה"כ', investTotal, 'pos', false);
     html += '</div>';
   }
 
