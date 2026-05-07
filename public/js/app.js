@@ -573,6 +573,7 @@ function renderDashboard() {
     balance: null, detail: l.lender || ''
   })));
 
+  renderLiveBalances();
   renderBalanceSnapshot();
   renderPieChart(totalAssets, 0, totalLiab);
 }
@@ -590,6 +591,81 @@ function renderAccountSection(id, items) {
       </div>
       ${item.balance !== null ? `<div class="account-balance ${item.balance >= 0 ? 'pos' : 'neg'}">${fmt(Math.abs(item.balance))}</div>` : ''}
     </div>`).join('');
+}
+
+// ── Live balances card (DailyBalances.xlsx) ───────────────────────────────────
+function renderLiveBalances() {
+  const card   = document.getElementById('card-live-balances');
+  const el     = document.getElementById('dash-live-balances');
+  const dateEl = document.getElementById('live-balances-date');
+  if (!card || !el) return;
+
+  const lb = profile?.live_balances;
+  if (!lb) { card.style.display = 'none'; return; }
+  card.style.display = '';
+
+  const d = lb.report_date;
+  dateEl.textContent = d
+    ? 'נכון ל-' + d.substring(8,10) + '/' + d.substring(5,7) + '/' + d.substring(0,4)
+    : '';
+
+  const row = (label, value, cls, sub) => {
+    if (value === null || value === undefined) return '';
+    const sign = (cls === 'neg') ? '-' : '';
+    return `<div class="lb-row${sub ? ' lb-sub' : ''}">
+      <span class="lb-label">${label}</span>
+      <span class="lb-val ${cls}">${sign}${fmt(Math.abs(value))}</span>
+    </div>`;
+  };
+
+  let html = '<div class="lb-grid">';
+
+  // עו"ש
+  html += '<div class="lb-section">';
+  html += '<div class="lb-section-title">🏦 עו"ש</div>';
+  html += row('יתרה', lb.checking, lb.checking >= 0 ? 'pos' : 'neg', false);
+  if (lb.credit_line) html += row('מסגרת אשראי', lb.credit_line, 'neutral', true);
+  html += '</div>';
+
+  // השקעות
+  if (lb.investments?.total !== null && lb.investments?.total !== undefined) {
+    html += '<div class="lb-section">';
+    html += '<div class="lb-section-title">📈 השקעות</div>';
+    if (lb.investments.deposits !== null) html += row('פיקדונות', lb.investments.deposits, 'pos', true);
+    if (lb.investments.pri     !== null) html += row('פר"י',      lb.investments.pri,      'pos', true);
+    html += row('סה"כ', lb.investments.total, 'pos', false);
+    html += '</div>';
+  }
+
+  // אשראי
+  if (lb.credit_card_debt !== null && lb.credit_card_debt !== undefined) {
+    html += '<div class="lb-section">';
+    html += '<div class="lb-section-title">💳 חיוב אשראי</div>';
+    html += row('חיוב כרטיסים', lb.credit_card_debt, 'neg', false);
+    html += '</div>';
+  }
+
+  // משכנתא
+  if (lb.mortgage !== null && lb.mortgage !== undefined) {
+    html += '<div class="lb-section">';
+    html += '<div class="lb-section-title">🏠 משכנתא</div>';
+    html += row('יתרת חוב', lb.mortgage, 'neg', false);
+    html += '</div>';
+  }
+
+  html += '</div>'; // lb-grid
+
+  // Net worth summary bar
+  if (lb.net_worth !== null && lb.net_worth !== undefined) {
+    const nwCls = lb.net_worth >= 0 ? 'pos' : 'neg';
+    const sign  = lb.net_worth < 0 ? '-' : '';
+    html += `<div class="lb-net-worth">
+      <span>שווי נטו</span>
+      <span class="lb-val ${nwCls}" style="font-size:16px">${sign}${fmt(Math.abs(lb.net_worth))}</span>
+    </div>`;
+  }
+
+  el.innerHTML = html;
 }
 
 // ── Balance snapshot card ─────────────────────────────────────────────────────
@@ -849,10 +925,14 @@ async function doUpload(file) {
       if (data.profileUpdated) {
         profile = await fetch('/api/profile').then(r => r.json());
         renderDashboard();
-        const count = data.inserted || 0;
-        let msg = `<div class="upload-success">✓ דוח יתרות עודכן מ-${data.filename}`;
-        if (count > 0) msg += ` — ${count} סעיפים נקלטו`;
-        msg += '</div>';
+        let successText;
+        if (data.profileUpdated === 'live_balances' && profile.live_balances?.checking != null) {
+          successText = `נטענו נתוני יתרות בהצלחה — יתרת עו"ש: ${fmt(profile.live_balances.checking)}`;
+        } else {
+          const count = data.inserted || 0;
+          successText = `דוח יתרות עודכן מ-${data.filename}${count > 0 ? ` — ${count} סעיפים נקלטו` : ''}`;
+        }
+        let msg = `<div class="upload-success">✓ ${successText}</div>`;
         if (data.warning) msg += `<div class="upload-warning" style="margin-top:8px;white-space:pre-line">${data.warning}</div>`;
         status.innerHTML = msg;
       // If 0 rows and there's a warning (e.g. frameset file), show only the warning

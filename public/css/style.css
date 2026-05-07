@@ -422,6 +422,20 @@ body {
 }
 .remove-upload-btn:hover { background: var(--red); color: #fff; border-color: var(--red); }
 
+/* LIVE BALANCES CARD */
+.lb-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; padding: 4px 0 12px; }
+.lb-section { background: var(--bg); border-radius: 10px; padding: 12px 14px; }
+.lb-section-title { font-size: 12px; font-weight: 600; color: var(--text-muted); margin-bottom: 8px; }
+.lb-row { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; padding: 3px 0; font-size: 13px; }
+.lb-row + .lb-row { border-top: 1px solid var(--border); }
+.lb-sub { font-size: 12px; color: var(--text-muted); }
+.lb-label { flex: 1; }
+.lb-val { font-weight: 600; white-space: nowrap; direction: ltr; }
+.lb-val.pos { color: var(--green); }
+.lb-val.neg { color: var(--red); }
+.lb-val.neutral { color: var(--text-muted); }
+.lb-net-worth { display: flex; justify-content: space-between; align-items: center; border-top: 2px solid var(--border); padding-top: 12px; font-weight: 600; font-size: 14px; }
+
 /* BALANCE SNAPSHOT CARD */
 .snapshot-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 1rem; padding: 4px 0; }
 .snapshot-section { background: var(--bg); border-radius: 10px; padding: 12px 14px; }

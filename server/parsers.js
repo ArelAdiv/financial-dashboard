@@ -190,6 +190,7 @@ function detectFileType(filePath, rows) {
 
   for (const row of rows.slice(0, 8)) {
     const line = row.map(c => str(c)).join(' ');
+    if (line.includes('חשבונות שוטפים'))             return 'poalim_daily_balances';
     if (line.includes('תנועות בחשבון'))              return 'poalim_transactions';
     if (line.includes('ריכוז יתרות'))                return 'poalim_balances';
     if (line.includes('משכנתאות'))                   return 'poalim_mortgage';
@@ -884,6 +885,125 @@ function parseCal(rows, accountName, sourceFile) {
   return txResult(transactions, 'cal_cc', { found, imported: transactions.length, skipped });
 }
 
+// ── Poalim: DailyBalances.xlsx ────────────────────────────────────────────────
+// Structured snapshot file with sections: חשבונות שוטפים / השקעות / אשראי / משכנתאות
+function parsePoalimDailyBalances(rows, accountName, sourceFile) {
+  // Find section start rows by header keyword
+  let checkingIdx = -1, investIdx = -1, creditIdx = -1, mortgageIdx = -1;
+  for (let i = 0; i < rows.length; i++) {
+    const line = rows[i].map(str).join(' ');
+    if (checkingIdx < 0 && line.includes('חשבונות שוטפים')) checkingIdx = i;
+    else if (investIdx   < 0 && line.includes('השקעות'))         investIdx   = i;
+    else if (creditIdx   < 0 && line.includes('אשראי'))          creditIdx   = i;
+    else if (mortgageIdx < 0 && (line.includes('משכנתאות') || line.includes('משכנתא'))) mortgageIdx = i;
+  }
+
+  let report_date = null;
+
+  // Helper: scan rows[from..to] and return first data row matching predicate
+  const scanSection = (from, to, fn) => {
+    for (let i = from + 1; i < Math.min(to, rows.length); i++) {
+      const cells = rows[i].map(str);
+      if (!cells[0] || cells[0].length < 2) continue;
+      if (isSummaryRow(rows[i])) continue;
+      const res = fn(cells, rows[i]);
+      if (res !== undefined) return res;
+    }
+    return null;
+  };
+
+  const scanSectionTotal = (from, to) => {
+    for (let i = from + 1; i < Math.min(to, rows.length); i++) {
+      if (!isSummaryRow(rows[i])) continue;
+      const nums = rows[i].map(str).map(parseNum).filter(n => n !== null && n !== 0);
+      if (nums.length) return nums[nums.length - 1];
+    }
+    return null;
+  };
+
+  // ── Section 1: Checking ──────────────────────────────────────────────────
+  let checking = null, credit_line = null;
+  const checkEnd = investIdx > 0 ? investIdx : rows.length;
+  scanSection(checkingIdx, checkEnd, (cells) => {
+    if (!(cells[0].includes('עו"ש') || cells[0].includes('עוש'))) return undefined;
+    // Date from col 1
+    if (!report_date) report_date = normalizeDate(cells[1]);
+    const nums = cells.map(parseNum).filter(n => n !== null);
+    if (nums.length >= 2) { credit_line = nums[nums.length - 2]; checking = nums[nums.length - 1]; }
+    else if (nums.length === 1) { checking = nums[0]; }
+    return true;
+  });
+  // Also try to get date from header cols even if no match above
+  if (!report_date) {
+    for (let i = checkingIdx; i < Math.min(checkEnd, checkingIdx + 6); i++) {
+      const cells = rows[i].map(str);
+      for (const c of cells) { const d = normalizeDate(c); if (d) { report_date = d; break; } }
+      if (report_date) break;
+    }
+  }
+
+  // ── Section 2: Investments ───────────────────────────────────────────────
+  let inv_deposits = null, inv_pri = null, inv_total = null;
+  const investEnd = creditIdx > 0 ? creditIdx : (mortgageIdx > 0 ? mortgageIdx : rows.length);
+  if (investIdx >= 0) {
+    scanSection(investIdx, investEnd, (cells) => {
+      const nums = cells.map(parseNum).filter(n => n !== null && n !== 0);
+      if (!nums.length) return undefined;
+      const bal = nums[nums.length - 1];
+      if (cells[0].includes('פיקדון'))                           inv_deposits = bal;
+      else if (cells[0].includes('פר"י') || cells[0].includes("פר'י") || /פר.?י/.test(cells[0])) inv_pri = bal;
+      return undefined; // keep scanning
+    });
+    inv_total = scanSectionTotal(investIdx, investEnd);
+    if (inv_total === null && (inv_deposits !== null || inv_pri !== null))
+      inv_total = (inv_deposits ?? 0) + (inv_pri ?? 0);
+  }
+
+  // ── Section 3: Credit card debt ─────────────────────────────────────────
+  let credit_card_debt = null;
+  const creditEnd = mortgageIdx > 0 ? mortgageIdx : rows.length;
+  if (creditIdx >= 0) {
+    scanSection(creditIdx, creditEnd, (cells) => {
+      const nums = cells.map(parseNum).filter(n => n !== null && n !== 0);
+      if (!nums.length) return undefined;
+      credit_card_debt = nums[nums.length - 1];
+      return true;
+    });
+  }
+
+  // ── Section 4: Mortgage ─────────────────────────────────────────────────
+  let mortgage = null;
+  if (mortgageIdx >= 0) {
+    scanSection(mortgageIdx, rows.length, (cells) => {
+      const nums = cells.map(parseNum).filter(n => n !== null && n !== 0);
+      if (!nums.length) return undefined;
+      mortgage = -Math.abs(nums[nums.length - 1]); // always negative (debt)
+      return true;
+    });
+  }
+
+  const net_worth =
+    (checking    !== null || inv_total !== null || mortgage !== null)
+      ? (checking ?? 0) + (inv_total ?? 0) + (mortgage ?? 0)
+      : null;
+
+  const live_balances = {
+    report_date,
+    checking,
+    credit_line,
+    investments: { deposits: inv_deposits, pri: inv_pri, total: inv_total },
+    credit_card_debt,
+    mortgage,
+    net_worth
+  };
+
+  console.log('[poalim_daily_balances]', live_balances);
+  return {
+    type: 'profile_data', profileKey: 'live_balances',
+    profileData: live_balances, sourceType: 'poalim_daily_balances'
+  };
+}
+
 // ── PDF fallback ──────────────────────────────────────────────────────────────
 async function parsePdf(filePath, accountName, sourceFile) {
   try {
@@ -963,9 +1083,10 @@ async function parseFile(filePath, accountName) {
     console.log(`[parseFile] type=${sourceType} file=${sourceFile}`);
 
     switch (sourceType) {
-      case 'poalim_transactions': return parsePoalimTransactions(rows, accountName, sourceFile);
-      case 'poalim_balances':     return parsePoalimBalances(rows, accountName, sourceFile);
-      case 'poalim_mortgage':     return parsePoalimMortgage(rows, accountName, sourceFile);
+      case 'poalim_daily_balances': return parsePoalimDailyBalances(rows, accountName, sourceFile);
+      case 'poalim_transactions':   return parsePoalimTransactions(rows, accountName, sourceFile);
+      case 'poalim_balances':       return parsePoalimBalances(rows, accountName, sourceFile);
+      case 'poalim_mortgage':       return parsePoalimMortgage(rows, accountName, sourceFile);
       case 'isracard_cc':         return parseIsracard(rows, accountName, sourceFile);
       case 'max_cc':              return parseMax(rows, accountName, sourceFile);
       case 'cal_cc':              return parseCal(rows, accountName, sourceFile);
