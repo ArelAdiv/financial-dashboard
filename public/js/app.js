@@ -1092,7 +1092,10 @@ async function loadUploads() {
               : `<td style="font-size:12px;color:#666">${fmtDate(r.date_from)} — ${fmtDate(r.date_to)}</td>`;
             return `
             <tr>
-              <td class="uploads-filename" title="${r.source_file || ''}">${(r.source_file || '').replace(/^\d+_/, '')}</td>
+              <td class="uploads-filename" title="${r.source_file || ''}">${
+                ({ live_balances: 'DailyBalances (יתרות)', balance_snapshot: 'דוח יתרות', mortgage_details: 'דוח משכנתא' })[r.source_file]
+                || (r.source_file || '').replace(/^\d+_/, '')
+              }</td>
               <td>${r.account || '—'}</td>
               <td>${sourceTypeLabel(r.source_type)}</td>
               ${txCell}

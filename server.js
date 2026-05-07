@@ -229,6 +229,13 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
   });
 });
 
+// Labels and source types for known profile keys
+const PROFILE_KEY_META = {
+  live_balances:    { source_type: 'poalim_daily_balances', label: 'DailyBalances.xlsx' },
+  balance_snapshot: { source_type: 'poalim_balances',       label: 'דוח יתרות' },
+  mortgage_details: { source_type: 'poalim_mortgage',       label: 'דוח משכנתא' },
+};
+
 app.get('/api/uploads', (req, res) => {
   const txRows   = db.prepare(`
     SELECT source_file, account, source_type,
@@ -248,32 +255,60 @@ app.get('/api/uploads', (req, res) => {
     FROM profile_uploads
   `).all();
 
+  // Synthesize rows for profile data that exists in profile.json but has no
+  // upload record (uploaded before the profile_uploads table was added).
+  // Use the profile_key itself as the synthetic filename for the DELETE endpoint.
+  const trackedKeys = new Set(profRows.map(r => r.profile_key));
+  const prof = loadProfile() || {};
+  for (const [key, meta] of Object.entries(PROFILE_KEY_META)) {
+    if (prof[key] && !trackedKeys.has(key)) {
+      profRows.push({
+        source_file: key,          // synthetic filename — handled by DELETE
+        account: null,
+        source_type: meta.source_type,
+        tx_count: 0,
+        date_from: null,
+        date_to: null,
+        imported_at: prof[key]?.updated_at || prof.updatedAt || null,
+        profile_key: key
+      });
+    }
+  }
+
   const all = [...txRows, ...profRows]
     .sort((a, b) => (b.imported_at || '').localeCompare(a.imported_at || ''));
   res.json(all);
 });
 
+function deleteProfileKey(profileKey, sourceType) {
+  const existing = loadProfile() || {};
+  if (profileKey === 'balance_snapshot') {
+    if (existing.balance_snapshot?.accounts) {
+      existing.balance_snapshot.accounts = existing.balance_snapshot.accounts
+        .filter(a => a.source !== sourceType);
+      if (!existing.balance_snapshot.accounts.length) delete existing.balance_snapshot;
+    }
+  } else {
+    delete existing[profileKey];
+  }
+  existing.updatedAt = new Date().toISOString();
+  saveProfile(existing);
+}
+
 app.delete('/api/uploads/:filename', (req, res) => {
   const filename = decodeURIComponent(req.params.filename);
 
-  // Profile upload?
+  // Synthetic filename? (profile data that has no upload record — key used as filename)
+  if (PROFILE_KEY_META[filename]) {
+    deleteProfileKey(filename, PROFILE_KEY_META[filename].source_type);
+    return res.json({ ok: true, deleted: 1, isProfile: true });
+  }
+
+  // Tracked profile upload?
   const profRow = db.prepare('SELECT * FROM profile_uploads WHERE filename = ?').get(filename);
   if (profRow) {
     db.prepare('DELETE FROM profile_uploads WHERE filename = ?').run(filename);
-
-    const existing = loadProfile() || {};
-    if (profRow.profile_key === 'balance_snapshot') {
-      // Remove only accounts from this source so other banks' data survives
-      if (existing.balance_snapshot?.accounts) {
-        existing.balance_snapshot.accounts = existing.balance_snapshot.accounts
-          .filter(a => a.source !== profRow.source_type);
-        if (!existing.balance_snapshot.accounts.length) delete existing.balance_snapshot;
-      }
-    } else {
-      delete existing[profRow.profile_key];
-    }
-    existing.updatedAt = new Date().toISOString();
-    saveProfile(existing);
+    deleteProfileKey(profRow.profile_key, profRow.source_type);
     return res.json({ ok: true, deleted: 1, isProfile: true });
   }
 
