@@ -546,7 +546,10 @@ function renderDashboard() {
 
   const lb = profile?.live_balances;
   if (lb) {
-    const investTotal = (lb.investments?.deposits ?? 0) + (lb.investments?.pri ?? 0);
+    const _dep = lb.investments?.deposits ?? null;
+    const _pri = lb.investments?.pri ?? null;
+    const _tot = lb.investments?.total ?? null;
+    const investTotal = _tot ?? ((_dep ?? 0) + (_pri ?? 0));
     const lbAssets = (lb.checking ?? 0) + investTotal;
     const lbLiab = Math.abs(lb.mortgage ?? 0) + Math.abs(lb.credit_card_debt ?? 0);
     const lbNet = lb.net_worth ?? (lbAssets - lbLiab);
@@ -653,15 +656,18 @@ function renderLiveBalances() {
   html += '</div>';
 
   // השקעות
-  const investDeposits = lb.investments?.deposits ?? null;
-  const investPri      = lb.investments?.pri ?? null;
-  const investTotal    = (investDeposits ?? 0) + (investPri ?? 0);
-  if (investDeposits !== null || investPri !== null) {
+  const investDepositsRaw = lb.investments?.deposits ?? null;
+  const investPri         = lb.investments?.pri ?? null;
+  const investTotalRaw    = lb.investments?.total ?? null;
+  // Use stored total as the ground truth; derive deposits when not parsed directly
+  const investTotal    = investTotalRaw ?? ((investDepositsRaw ?? 0) + (investPri ?? 0)) || null;
+  const investDeposits = investDepositsRaw ?? (investTotal !== null && investPri !== null ? investTotal - investPri : null);
+  if (investTotal !== null || investDeposits !== null || investPri !== null) {
     html += '<div class="lb-section">';
     html += '<div class="lb-section-title">📈 השקעות</div>';
     if (investDeposits !== null) html += row('פיקדונות', investDeposits, 'pos', true);
     if (investPri     !== null) html += row('פר"י',      investPri,      'pos', true);
-    html += row('סה"כ', investTotal, 'pos', false);
+    if (investTotal   !== null) html += row('סה"כ', investTotal, 'pos', false);
     html += '</div>';
   }
 

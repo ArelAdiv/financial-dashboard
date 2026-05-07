@@ -953,9 +953,9 @@ function parsePoalimDailyBalances(rows, accountName, sourceFile) {
       if (!report_date && ic.date >= 0) report_date = normalizeDate(cells[ic.date]);
       if (isSummaryRow(rows[i])) {
         inv_total = cellNum(cells, ic.balance);
-      } else if (cells[0].includes('פיקדון')) {
+      } else if (cells.some(c => c.includes('פיקדון'))) {
         inv_deposits = cellNum(cells, ic.balance);
-      } else if (cells[0].includes('פר"י') || cells[0].includes("פר'י") || /פר.?י/.test(cells[0])) {
+      } else if (cells.some(c => c.includes('פר"י') || c.includes("פר'י") || /פר.?י/.test(c))) {
         inv_pri = cellNum(cells, ic.balance);
       }
     }
