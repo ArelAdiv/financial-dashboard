@@ -39,7 +39,7 @@ db.exec(`
 `);
 
 // Migrate: add columns that may be missing in older DB files
-['category TEXT', 'reference TEXT', 'notes TEXT', 'source_type TEXT'].forEach(col => {
+['category TEXT', 'reference TEXT', 'notes TEXT', 'source_type TEXT', 'billing_date TEXT', 'card_digits TEXT'].forEach(col => {
   try { db.exec(`ALTER TABLE transactions ADD COLUMN ${col}`); } catch {}
 });
 
@@ -129,8 +129,8 @@ function saveProfile(data) {
 // ── Insert helpers ────────────────────────────────────────────────────────────
 const insertTx = db.prepare(`
   INSERT OR IGNORE INTO transactions
-    (account, date, description, amount, balance, category, reference, notes, source_type, source_file, imported_at)
-  VALUES (?,?,?,?,?,?,?,?,?,?,?)
+    (account, date, description, amount, balance, category, reference, notes, source_type, source_file, imported_at, billing_date, card_digits)
+  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
 `);
 
 const insertMany = db.transaction((rows) => {
@@ -141,7 +141,9 @@ const insertMany = db.transaction((rows) => {
       r.balance ?? null, r.category ?? null, r.reference ?? null,
       r.notes ?? null, r.source_type ?? null,
       r.source ?? r.source_file ?? null,
-      new Date().toISOString()
+      new Date().toISOString(),
+      r.billing_date ?? null,
+      r.card_digits ?? null
     );
     if (info.changes > 0) inserted++;
   }
@@ -212,6 +214,30 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
 
   // Transaction files → insert into SQLite
   const inserted = insertMany(result.transactions);
+
+  // Auto-link CC card to profile when card digits are known
+  if (result.sourceType === 'cal_cc') {
+    const cardDigits  = result.transactions[0]?.card_digits;
+    const rawLinkedAccount = result.transactions[0]?.linked_account;
+    if (cardDigits) {
+      const existing = loadProfile() || {};
+      const cards = existing.creditCards || [];
+      const card = cards.find(c => c.digits === cardDigits);
+      if (card && rawLinkedAccount && !card.linked_account) {
+        const knownAccounts = db.prepare(
+          'SELECT DISTINCT account FROM transactions WHERE account IS NOT NULL'
+        ).all().map(r => r.account);
+        const matched = knownAccounts.find(a =>
+          a.replace(/[^0-9]/g, '').includes(rawLinkedAccount)
+        );
+        if (matched) {
+          card.linked_account = matched;
+          existing.updatedAt = new Date().toISOString();
+          saveProfile(existing);
+        }
+      }
+    }
+  }
 
   const detectedAccount = result.transactions[0]?.account || null;
 

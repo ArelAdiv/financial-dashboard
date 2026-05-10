@@ -275,6 +275,32 @@ body {
 .tx-credit { color: var(--green); }
 .tx-debit  { color: var(--red); }
 .tx-bal    { color: #999; }
+
+/* CC transaction rows */
+.tx-cc-row td { background: #fafafa; }
+.tx-notes { font-size: 11px; color: var(--text-secondary); margin-top: 2px; }
+
+/* CC digits badge (in account column + dashboard card) */
+.cc-digits-badge {
+  display: inline-block;
+  font-size: 11px; font-weight: 600;
+  padding: 1px 6px; border-radius: 4px;
+  margin-right: 4px; direction: ltr; white-space: nowrap;
+}
+
+/* Billing date badges */
+.billing-badge {
+  display: inline-block; font-size: 11px; font-weight: 500;
+  padding: 1px 6px; border-radius: 4px; white-space: nowrap;
+}
+.billing-normal { background: var(--blue-bg); color: var(--blue); }
+.billing-warn   { background: var(--orange-bg); color: var(--orange); }
+
+/* Synthetic billing rows */
+.cc-billing-row td { background: #f0f4ff; }
+.cc-billing-label { font-weight: 500; font-size: 13px; }
+
+/* Stale warning */
 .tx-stale-row td { background: #fff8f8 !important; }
 .tx-stale-warning-row td {
   padding: 4px 12px 8px;
