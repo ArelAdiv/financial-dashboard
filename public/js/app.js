@@ -544,30 +544,41 @@ function renderDashboard() {
   document.getElementById('m-income').textContent = monthlyIncome ? fmt(monthlyIncome) : '₪ —';
   document.getElementById('m-loans').textContent = monthlyExpenses ? fmt(monthlyExpenses) : '₪ —';
 
-  const lb = profile?.live_balances;
-  if (lb) {
-    const _dep = lb.investments?.deposits ?? null;
-    const _pri = lb.investments?.pri ?? null;
-    const _tot = lb.investments?.total ?? null;
-    const investTotal = _tot ?? ((_dep ?? 0) + (_pri ?? 0));
-    const lbAssets = (lb.checking ?? 0) + investTotal;
-    const lbLiab = Math.abs(lb.mortgage ?? 0) + Math.abs(lb.credit_card_debt ?? 0);
-    const lbNet = lb.net_worth ?? (lbAssets - lbLiab);
+  const lb  = profile?.live_balances;
+  const llb = profile?.leumi_balances;
 
-    document.getElementById('m-assets').textContent = fmt(lbAssets);
-    document.getElementById('m-liab').textContent = fmt(lbLiab);
-    document.getElementById('m-net').textContent = fmt(lbNet);
-    document.getElementById('m-net').className = 'metric-value ' + (lbNet >= 0 ? 'green' : 'red');
+  if (lb || llb) {
+    // Poalim figures
+    const _dep = lb?.investments?.deposits ?? null;
+    const _pri = lb?.investments?.pri ?? null;
+    const _tot = lb?.investments?.total ?? null;
+    const investTotal  = _tot ?? ((_dep ?? 0) + (_pri ?? 0));
+    const poalimAssets = (lb?.checking ?? 0) + investTotal;
+    const poalimLiab   = Math.abs(lb?.mortgage ?? 0) + Math.abs(lb?.credit_card_debt ?? 0);
+
+    // Leumi figures
+    const leumiAssets = llb?.checking ?? 0;
+    const leumiLiab   = Math.abs(llb?.loans_total ?? 0) + Math.abs(llb?.credit_card_debt ?? 0);
+
+    // Combined
+    const combinedAssets = poalimAssets + leumiAssets;
+    const combinedLiab   = poalimLiab   + leumiLiab;
+    const combinedNet    = combinedAssets - combinedLiab;
+
+    document.getElementById('m-assets').textContent = fmt(combinedAssets);
+    document.getElementById('m-liab').textContent   = fmt(combinedLiab);
+    document.getElementById('m-net').textContent    = fmt(combinedNet);
+    document.getElementById('m-net').className = 'metric-value ' + (combinedNet >= 0 ? 'green' : 'red');
 
     document.getElementById('m-saving-label').textContent = 'סה״כ השקעות';
-    document.getElementById('m-saving-sub').textContent = 'פיקדונות + פר"י';
-    document.getElementById('m-saving').textContent = fmt(investTotal);
-    document.getElementById('m-saving').className = 'metric-value green';
+    document.getElementById('m-saving-sub').textContent   = 'פיקדונות + פר"י';
+    document.getElementById('m-saving').textContent       = fmt(investTotal);
+    document.getElementById('m-saving').className         = 'metric-value green';
 
     renderLiveBalances();
     renderLeumiBalances();
     renderBalanceSnapshot();
-    renderPieChart(lb.checking ?? 0, investTotal, lbLiab);
+    renderPieChart(poalimAssets + leumiAssets, 0, combinedLiab);
   } else {
     document.getElementById('m-assets').textContent = totalAssets ? fmt(totalAssets) : '₪ —';
     document.getElementById('m-liab').textContent = totalLiab ? fmt(totalLiab) : '₪ —';
