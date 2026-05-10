@@ -1040,6 +1040,7 @@ function buildStaleAccounts() {
 
     const balDiff   = info.balance !== null && Math.abs(info.balance - liveBalance) > 1;
     const dateStale = liveDate && info.date && liveDate > info.date;
+    console.log('[stale]', account, '| txBal:', info.balance, '| liveBal:', liveBalance, '| diff:', info.balance !== null ? Math.abs(info.balance - liveBalance) : 'n/a', '| txDate:', info.date, '| liveDate:', liveDate, '| balDiff:', balDiff, '| dateStale:', dateStale, '| srcType:', info.source_type);
     if (balDiff && dateStale) {
       stale[account] = { liveBalance, liveDate, lastTxDate: info.date, lastTxBalance: info.balance };
     }
