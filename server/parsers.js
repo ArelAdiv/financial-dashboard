@@ -150,15 +150,25 @@ function extractMaxId(rows) {
   return null;
 }
 
-function extractCalId(rows) {
+function extractCalHeader(rows) {
+  let digits = null, linked_account = null;
   for (let i = 0; i < Math.min(rows.length, 8); i++) {
     const line = rows[i].map(c => str(c)).join(' ');
-    let m = line.match(/\*+(\d{4})/);
-    if (m) return `כאל *${m[1]}`;
-    m = line.match(/ספרות אחרונות[:\s]*(\d{4})/);
-    if (m) return `כאל *${m[1]}`;
+    if (!digits) {
+      let m = line.match(/\*+(\d{4})/);
+      if (m) { digits = m[1]; }
+      else {
+        m = line.match(/ספרות אחרונות[:\s]*(\d{4})/);
+        if (m) digits = m[1];
+      }
+    }
+    if (!linked_account) {
+      // Bank account numbers are typically 6-9 digits; skip 4-digit card numbers
+      const m = line.match(/\b(\d{6,9})\b/);
+      if (m && m[1] !== digits) linked_account = m[1];
+    }
   }
-  return null;
+  return { digits, linked_account, account_id: digits ? `כאל *${digits}` : null };
 }
 
 // Resolves the final account label:
@@ -871,7 +881,9 @@ function parseMax(rows, accountName, sourceFile) {
 
 // ── Cal ───────────────────────────────────────────────────────────────────────
 function parseCal(rows, accountName, sourceFile) {
-  const account = resolveAccount(extractCalId(rows), accountName, sourceFile);
+  const { digits, linked_account, account_id } = extractCalHeader(rows);
+  const account = resolveAccount(account_id, accountName, sourceFile);
+
   const hi = findHeader(rows, ['תאריך', 'סכום'], 15);
   if (hi < 0) {
     console.log('[cal] header not found, falling back to generic');
@@ -880,13 +892,14 @@ function parseCal(rows, accountName, sourceFile) {
 
   const hdrs = rows[hi].map(c => str(c));
   const dc = {
-    date:     colIdx(hdrs, ['תאריך עסקה', 'תאריך'], 0),
-    desc:     colIdx(hdrs, ['שם בית עסק', 'בית עסק', 'תיאור'], 1),
-    amount:   colIdx(hdrs, ['סכום חיוב', 'סכום בש"ח', 'סכום'], 3),
-    category: colIdx(hdrs, ['ענף', 'קטגוריה'], 5),
-    notes:    colIdx(hdrs, ['פרטים', 'הערות'], -1)
+    date:         colIdx(hdrs, ['תאריך עסקה', 'תאריך'], 0),
+    desc:         colIdx(hdrs, ['שם בית עסק', 'בית עסק', 'תיאור'], 1),
+    amount:       colIdx(hdrs, ['סכום חיוב', 'סכום בש"ח', 'סכום'], 2),
+    billing_date: colIdx(hdrs, ['מועד חיוב'], 3),
+    tx_type:      colIdx(hdrs, ['סוג עסקה'], 4),
+    notes:        colIdx(hdrs, ['הערות', 'פרטים'], 6),
   };
-  console.log(`[cal] headerIdx=${hi} cols:`, dc);
+  console.log(`[cal] headerIdx=${hi} digits=${digits} linked=${linked_account} cols:`, dc);
 
   let found = 0, skipped = 0;
   const transactions = [];
@@ -900,16 +913,22 @@ function parseCal(rows, accountName, sourceFile) {
     const amountRaw = parseNum(row[dc.amount]);
     if (amountRaw === null) { skipped++; continue; }
 
-    const desc = str(row[dc.desc]) || (dc.category >= 0 ? str(row[dc.category]) : '');
+    const billingDate = dc.billing_date >= 0 ? normalizeDate(row[dc.billing_date]) : null;
+    const txType      = dc.tx_type >= 0 ? str(row[dc.tx_type]) || null : null;
+    const notes       = dc.notes  >= 0 ? str(row[dc.notes])   || null : null;
+    const desc        = str(row[dc.desc]) || '';
 
     transactions.push({
       date, description: desc,
-      amount:    -Math.abs(amountRaw),
-      balance:   null,
-      category:  dc.category >= 0 ? str(row[dc.category]) || null : null,
-      reference: null,
-      notes:     dc.notes >= 0 ? str(row[dc.notes]) || null : null,
-      account:   account, source: sourceFile, source_type: 'cal_cc'
+      amount:         -Math.abs(amountRaw),
+      balance:        null,
+      category:       txType,
+      reference:      null,
+      notes,
+      billing_date:   billingDate,
+      card_digits:    digits,
+      linked_account,            // used by server.js for profile auto-link only
+      account, source: sourceFile, source_type: 'cal_cc'
     });
   }
 

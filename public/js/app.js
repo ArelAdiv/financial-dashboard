@@ -274,6 +274,8 @@ function makeCCForm(i) {
     '<option>ויזה כאל</option><option>ישראכרט</option><option>מקס</option>' +
     '<option>אמריקן אקספרס</option><option>אחר</option>' +
     '</select></div>' +
+    '<div class="field"><label>4 ספרות אחרונות</label>' +
+    '<input type="text" class="cc-digits" maxlength="4" placeholder="0451" style="direction:ltr"></div>' +
     '<div class="field"><label>שם בעל הכרטיס (אם שונה)</label>' +
     '<input type="text" class="cc-owner" placeholder="אופציונלי"></div>' +
     '<div class="field"><label>יום חיוב בחודש</label>' +
@@ -379,11 +381,16 @@ function collectWizardData() {
     owner: r.querySelector('.b-owner')?.value.trim() || ''
   }));
 
-  const creditCards = Array.from(document.querySelectorAll('#cc-container .account-form')).map(r => ({
-    company: r.querySelector('.cc-company')?.value || '',
-    owner: r.querySelector('.cc-owner')?.value.trim() || '',
-    day: parseInt(r.querySelector('.cc-day')?.value) || null
-  }));
+  const creditCards = Array.from(document.querySelectorAll('#cc-container .account-form')).map((r, i) => {
+    const existing = (profile?.creditCards || [])[i] || {};
+    return {
+      ...existing,
+      company: r.querySelector('.cc-company')?.value || '',
+      digits:  r.querySelector('.cc-digits')?.value.trim()  || existing.digits  || null,
+      owner:   r.querySelector('.cc-owner')?.value.trim()  || '',
+      day:     parseInt(r.querySelector('.cc-day')?.value)  || null,
+    };
+  });
 
   const loans = Array.from(document.querySelectorAll('#loans-container .account-form')).map(r => ({
     type: r.querySelector('.l-type')?.value || '',
@@ -481,8 +488,9 @@ function populateWizardFromProfile() {
       const c = (profile.creditCards || [])[i];
       if (!c) return;
       form.querySelector('.cc-company').value = c.company || '';
-      form.querySelector('.cc-owner').value = c.owner || '';
-      form.querySelector('.cc-day').value = c.day || '';
+      form.querySelector('.cc-digits').value  = c.digits  || '';
+      form.querySelector('.cc-owner').value   = c.owner   || '';
+      form.querySelector('.cc-day').value     = c.day     || '';
     });
 
     // Fill loans
@@ -635,10 +643,7 @@ function renderDashboard() {
     detail: b.owner ? `בעל: ${b.owner}` : ''
   })));
 
-  renderAccountSection('dash-cc', (profile.creditCards || []).map(c => ({
-    icon: '💳', name: c.company, type: 'כרטיס אשראי',
-    balance: null, detail: c.day ? `יום חיוב: ${c.day}` : ''
-  })));
+  renderCCSection();
 
   renderAccountSection('dash-savings', (profile.savings || []).map(s => ({
     icon: savingsIcon(s.type),
@@ -652,6 +657,118 @@ function renderDashboard() {
     balance: null, detail: l.lender || ''
   })));
 
+}
+
+// ── CC helpers ────────────────────────────────────────────────────────────────
+const CC_PALETTE = ['#2563eb', '#ea580c', '#16a34a', '#7c3aed', '#0891b2'];
+function getCCColor(account) {
+  let hash = 0;
+  for (const c of (account || '')) hash = (hash * 31 + c.charCodeAt(0)) & 0xffffffff;
+  return CC_PALETTE[Math.abs(hash) % CC_PALETTE.length];
+}
+
+// Returns synthetic bank-debit rows for all CC cards linked to bankAccount.
+// SCENARIO A (billing day matches card config): one aggregated row per billing date.
+// SCENARIO B (different billing date): one row per transaction.
+function buildCCBillingRows(bankAccount) {
+  const ccTypes = new Set(['cal_cc', 'isracard_cc', 'max_cc']);
+  const linkedCards = (profile?.creditCards || []).filter(c => c.linked_account === bankAccount && c.digits);
+  if (!linkedCards.length) return [];
+  const digitMap = Object.fromEntries(linkedCards.map(c => [c.digits, c]));
+
+  const groupsA = {};
+  const rowsB   = [];
+
+  for (const t of transactions) {
+    if (!ccTypes.has(t.source_type) || !t.billing_date || !digitMap[t.card_digits]) continue;
+    const card      = digitMap[t.card_digits];
+    const actualDay = parseInt(t.billing_date.substring(8, 10));
+    const isA       = card.day && actualDay === card.day;
+
+    if (isA) {
+      const key = `${t.billing_date}__${t.account}`;
+      if (!groupsA[key]) groupsA[key] = { billing_date: t.billing_date, account: t.account, card_digits: t.card_digits, total: 0 };
+      groupsA[key].total += t.amount;
+    } else {
+      rowsB.push({ date: t.billing_date, description: `חיוב כרטיס אשראי •••• ${t.card_digits} — ${t.description || ''}`, amount: t.amount, account: bankAccount, card_digits: t.card_digits, source_type: 'cc_billing', isBillingRow: true });
+    }
+  }
+
+  const rowsA = Object.values(groupsA).map(g => ({
+    date: g.billing_date,
+    description: `חיוב כרטיס אשראי •••• ${g.card_digits}`,
+    amount: g.total, account: bankAccount,
+    card_digits: g.card_digits, source_type: 'cc_billing', isBillingRow: true
+  }));
+
+  return [...rowsA, ...rowsB];
+}
+
+// ── CC dashboard card + modal ─────────────────────────────────────────────────
+function renderCCSection() {
+  const el    = document.getElementById('dash-cc');
+  const cards = profile?.creditCards || [];
+  if (!cards.length) { el.innerHTML = '<div class="empty-state">לא הוגדרו נתונים</div>'; return; }
+  el.innerHTML = cards.map((c, i) => {
+    const color  = getCCColor(c.company + (c.digits || ''));
+    const digits = c.digits ? `•••• ${c.digits}` : '';
+    const linked = c.linked_account ? `<div class="account-detail">מקושר: ${c.linked_account}</div>` : '';
+    const limit  = c.credit_limit   ? `<div class="account-detail">מסגרת: ${fmt(c.credit_limit)}</div>` : '';
+    return `<div class="account-item" onclick="openCCModal(${i})" style="cursor:pointer" title="לחץ לעריכה">
+      <div class="account-icon">💳</div>
+      <div class="account-info">
+        <div class="account-name">
+          ${c.company}
+          ${digits ? `<span class="cc-digits-badge" style="background:${color}18;color:${color};border:1px solid ${color}44">${digits}</span>` : ''}
+        </div>
+        <div class="account-type">כרטיס אשראי${c.day ? ` · יום חיוב ${c.day}` : ''}</div>
+        ${c.owner ? `<div class="account-detail">בעל: ${c.owner}</div>` : ''}
+        ${linked}${limit}
+      </div>
+      <div style="font-size:11px;color:#bbb;margin-right:4px">✏️</div>
+    </div>`;
+  }).join('');
+}
+
+let _ccModalIdx = null;
+
+function openCCModal(idx) {
+  _ccModalIdx = idx;
+  const c = (profile?.creditCards || [])[idx] || {};
+  document.getElementById('cc-modal-company').value = c.company || '';
+  document.getElementById('cc-modal-digits').value  = c.digits  || '';
+  document.getElementById('cc-modal-owner').value   = c.owner   || '';
+  document.getElementById('cc-modal-day').value     = c.day     || '';
+  document.getElementById('cc-modal-limit').value   = c.credit_limit || '';
+
+  const bankSel = document.getElementById('cc-modal-linked');
+  const banks = profile?.banks || [];
+  bankSel.innerHTML = '<option value="">-- ללא קישור --</option>' +
+    banks.map(b => `<option value="${b.bank}"${c.linked_account === b.bank ? ' selected' : ''}>${b.bank}</option>`).join('');
+
+  document.getElementById('cc-modal-overlay').style.display = 'flex';
+}
+
+function closeCCModal() {
+  document.getElementById('cc-modal-overlay').style.display = 'none';
+}
+
+async function saveCCModal() {
+  const cards = JSON.parse(JSON.stringify(profile?.creditCards || []));
+  if (_ccModalIdx === null || _ccModalIdx >= cards.length) return;
+  cards[_ccModalIdx] = {
+    ...cards[_ccModalIdx],
+    company:       document.getElementById('cc-modal-company').value,
+    digits:        document.getElementById('cc-modal-digits').value.trim() || null,
+    owner:         document.getElementById('cc-modal-owner').value.trim(),
+    day:           parseInt(document.getElementById('cc-modal-day').value)   || null,
+    linked_account: document.getElementById('cc-modal-linked').value         || null,
+    credit_limit:  parseFloat(document.getElementById('cc-modal-limit').value) || null,
+  };
+  await fetch('/api/profile', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ creditCards: cards }) });
+  profile = await fetch('/api/profile').then(r => r.json());
+  closeCCModal();
+  renderDashboard();
 }
 
 function renderAccountSection(id, items) {
@@ -1003,11 +1120,19 @@ function renderAccountsFull() {
 }
 
 // ── Transactions ──────────────────────────────────────────────────────────────
+const CC_SOURCE_TYPES = new Set(['cal_cc', 'isracard_cc', 'max_cc']);
+
 function renderTransactions() {
-  const allAccounts = [...new Set(transactions.map(t => t.account))];
+  const bankAccounts = [...new Set(transactions.filter(t => !CC_SOURCE_TYPES.has(t.source_type)).map(t => t.account))];
+  const ccAccounts   = [...new Set(transactions.filter(t =>  CC_SOURCE_TYPES.has(t.source_type)).map(t => t.account))];
+
   const sel = document.getElementById('tx-filter-account');
-  sel.innerHTML = '<option value="">כל החשבונות</option>' +
-    allAccounts.map(a => `<option value="${a}">${a}</option>`).join('');
+  let html = '<option value="">כל החשבונות</option>';
+  if (bankAccounts.length)
+    html += '<optgroup label="חשבונות בנק">' + bankAccounts.map(a => `<option value="${a}">${a}</option>`).join('') + '</optgroup>';
+  if (ccAccounts.length)
+    html += '<optgroup label="כרטיסי אשראי">' + ccAccounts.map(a => `<option value="${a}">${a}</option>`).join('') + '</optgroup>';
+  sel.innerHTML = html;
   filterTransactions();
 }
 
@@ -1049,58 +1174,108 @@ function buildStaleAccounts() {
 }
 
 function filterTransactions() {
-  const acct = document.getElementById('tx-filter-account').value;
+  const acct   = document.getElementById('tx-filter-account').value;
   const search = document.getElementById('tx-search').value.toLowerCase();
-  let filtered = transactions;
-  if (acct) filtered = filtered.filter(t => t.account === acct);
-  if (search) filtered = filtered.filter(t => (t.description || '').toLowerCase().includes(search));
-  filtered = [...filtered].sort((a, b) => (b.date || '').localeCompare(a.date || '') || b.id - a.id);
 
-  const body = document.getElementById('tx-body');
+  // Detect if the selected filter is a bank account (not CC)
+  const selectedIsBank = acct && transactions.some(t => t.account === acct) &&
+    !transactions.some(t => t.account === acct && CC_SOURCE_TYPES.has(t.source_type));
+
+  let filtered = transactions;
+  if (acct)   filtered = filtered.filter(t => t.account === acct);
+  if (search) filtered = filtered.filter(t =>
+    (t.description || '').toLowerCase().includes(search) ||
+    (t.notes       || '').toLowerCase().includes(search));
+
+  // Add synthetic CC billing rows when a bank account is selected without a text search
+  let synthetic = [];
+  if (selectedIsBank && !search) synthetic = buildCCBillingRows(acct);
+
+  const allRows = [...filtered, ...synthetic]
+    .sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.id || 0) - (a.id || 0));
+
+  const body  = document.getElementById('tx-body');
   const empty = document.getElementById('tx-empty');
 
-  if (!filtered.length) {
-    body.innerHTML = '';
-    empty.style.display = '';
-    return;
-  }
+  if (!allRows.length) { body.innerHTML = ''; empty.style.display = ''; return; }
   empty.style.display = 'none';
-  const fmtDate = d => d ? d.substring(8,10) + '/' + d.substring(5,7) + '/' + d.substring(0,4) : '—';
 
+  const fmtDate = d => d ? d.substring(8,10) + '/' + d.substring(5,7) + '/' + d.substring(0,4) : '—';
   const staleAccounts = buildStaleAccounts();
   const seenStale = new Set();
 
-  body.innerHTML = filtered.slice(0, 500).map(t => {
-    const isFirstStale = staleAccounts[t.account] && !seenStale.has(t.account);
-    if (staleAccounts[t.account]) seenStale.add(t.account);
+  body.innerHTML = allRows.slice(0, 500).map(t => {
+    // ── Synthetic CC billing row ───────────────────────────────────────────────
+    if (t.source_type === 'cc_billing') {
+      const color  = getCCColor(t.card_digits ? `כאל *${t.card_digits}` : t.account);
+      const debit  = t.amount < 0 ? Math.round(-t.amount).toLocaleString('he-IL') : '';
+      const credit = t.amount > 0 ? Math.round( t.amount).toLocaleString('he-IL') : '';
+      return `<tr class="cc-billing-row" style="border-right:3px solid ${color}">
+        <td class="tx-date">${fmtDate(t.date)}</td>
+        <td><span class="cc-billing-label">${t.description}</span></td>
+        <td class="tx-doc">—</td><td class="tx-doc">—</td><td class="tx-ref"></td>
+        <td class="tx-num tx-credit">${credit}</td>
+        <td class="tx-num tx-debit">${debit}</td>
+        <td class="tx-num tx-bal">—</td>
+      </tr>`;
+    }
 
-    const credit = t.amount > 0  ? Math.round(t.amount).toLocaleString('he-IL')  : '';
-    const debit  = t.amount < 0  ? Math.round(-t.amount).toLocaleString('he-IL') : '';
-    const bal    = t.balance != null ? Math.round(t.balance).toLocaleString('he-IL') : '—';
+    // ── Regular transaction row ────────────────────────────────────────────────
+    const isCCTx = CC_SOURCE_TYPES.has(t.source_type);
+    const isFirstStale = !isCCTx && staleAccounts[t.account] && !seenStale.has(t.account);
+    if (!isCCTx && staleAccounts[t.account]) seenStale.add(t.account);
+
+    const credit  = t.amount > 0  ? Math.round(t.amount).toLocaleString('he-IL')  : '';
+    const debit   = t.amount < 0  ? Math.round(-t.amount).toLocaleString('he-IL') : '';
+    const bal     = t.balance != null ? Math.round(t.balance).toLocaleString('he-IL') : '—';
     const srcFile = (t.source_file || t.source || '').replace(/^\d+_/, '');
-    const accountDisplay = t.account && t.account !== srcFile ? t.account : '—';
 
-    const row = `<tr${isFirstStale ? ' class="tx-stale-row"' : ''}>
+    // Account display: for CC show card badge; for bank show account name
+    let accountDisplay;
+    if (isCCTx) {
+      const color = getCCColor(t.account);
+      accountDisplay = `<span class="cc-digits-badge" style="background:${color}18;color:${color};border:1px solid ${color}44">•••• ${t.card_digits || t.account}</span>`;
+    } else {
+      accountDisplay = t.account && t.account !== srcFile ? t.account : '—';
+    }
+
+    // Billing date badge in reference column for CC transactions
+    let refCell = t.reference || '';
+    if (isCCTx && t.billing_date) {
+      const card      = (profile?.creditCards || []).find(c => c.digits === t.card_digits);
+      const actualDay = parseInt(t.billing_date.substring(8, 10));
+      const isStdDay  = card?.day && actualDay === card.day;
+      const bdStr     = fmtDate(t.billing_date);
+      refCell = isStdDay
+        ? `<span class="billing-badge billing-normal">יחויב ב-${bdStr}</span>`
+        : `<span class="billing-badge billing-warn">⚠️ יחויב ${bdStr}</span>`;
+    }
+
+    // Description: merchant + optional notes
+    const descExtra = isCCTx && t.notes
+      ? `<div class="tx-notes">${t.notes}</div>`
+      : '';
+
+    const rowClass = isFirstStale ? ' class="tx-stale-row"' : isCCTx ? ' class="tx-cc-row"' : '';
+    const rowStyle = isCCTx ? ` style="border-right:3px solid ${getCCColor(t.account)}"` : '';
+
+    const row = `<tr${rowClass}${rowStyle}>
       <td class="tx-date">${fmtDate(t.date)}</td>
-      <td>${t.description || '—'}</td>
+      <td>${t.description || '—'}${descExtra}</td>
       <td class="tx-doc">${accountDisplay}</td>
-      <td class="tx-doc">${srcFile}</td>
-      <td class="tx-ref">${t.reference || ''}</td>
+      <td class="tx-doc">${isCCTx ? '' : srcFile}</td>
+      <td class="tx-ref">${refCell}</td>
       <td class="tx-num tx-credit">${credit}</td>
       <td class="tx-num tx-debit">${debit}</td>
-      <td class="tx-num tx-bal">${bal}</td>
+      <td class="tx-num tx-bal">${isCCTx ? '' : bal}</td>
     </tr>`;
 
     if (!isFirstStale) return row;
 
     const { liveBalance, liveDate } = staleAccounts[t.account];
-    const liveDateStr = liveDate
-      ? liveDate.substring(8,10) + '/' + liveDate.substring(5,7) + '/' + liveDate.substring(0,4)
-      : null;
+    const liveDateStr = liveDate ? fmtDate(liveDate) : null;
     const warningRow = `<tr class="tx-stale-warning-row">
-      <td colspan="8">
-        <span class="tx-stale-msg">⚠ דוח תנועות אינו עדכני — יתרה לפי דוח יתרות${liveDateStr ? ' (' + liveDateStr + ')' : ''}: ${fmt(liveBalance)}</span>
-      </td>
+      <td colspan="8"><span class="tx-stale-msg">⚠ דוח תנועות אינו עדכני — יתרה לפי דוח יתרות${liveDateStr ? ' (' + liveDateStr + ')' : ''}: ${fmt(liveBalance)}</span></td>
     </tr>`;
     return row + warningRow;
   }).join('');
