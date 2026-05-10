@@ -1011,6 +1011,42 @@ function renderTransactions() {
   filterTransactions();
 }
 
+// Returns a map of { account → { liveBalance, liveDate, lastTxDate, lastTxBalance } }
+// for every account whose transaction history is out of date relative to a loaded
+// balance report (live_balances for Poalim, leumi_balances for Leumi).
+function buildStaleAccounts() {
+  const stale = {};
+  if (!profile?.live_balances && !profile?.leumi_balances) return stale;
+
+  // Find the most recent transaction per account (transactions arrive newest-first)
+  const acctInfo = {};
+  for (const t of transactions) {
+    if (!(t.account in acctInfo)) {
+      acctInfo[t.account] = { date: t.date || '', balance: t.balance, source_type: t.source_type };
+    }
+  }
+
+  for (const [account, info] of Object.entries(acctInfo)) {
+    let liveBalance = null, liveDate = null;
+    if (info.source_type === 'leumi_transactions' && profile.leumi_balances) {
+      liveBalance = profile.leumi_balances.checking;
+      liveDate    = profile.leumi_balances.report_date;
+    } else if (profile.live_balances &&
+               (info.source_type === 'poalim_transactions' || !info.source_type)) {
+      liveBalance = profile.live_balances.checking;
+      liveDate    = profile.live_balances.report_date;
+    }
+    if (liveBalance === null) continue;
+
+    const balDiff   = info.balance !== null && Math.abs(info.balance - liveBalance) > 1;
+    const dateStale = liveDate && info.date && liveDate > info.date;
+    if (balDiff || dateStale) {
+      stale[account] = { liveBalance, liveDate, lastTxDate: info.date, lastTxBalance: info.balance };
+    }
+  }
+  return stale;
+}
+
 function filterTransactions() {
   const acct = document.getElementById('tx-filter-account').value;
   const search = document.getElementById('tx-search').value.toLowerCase();
@@ -1029,14 +1065,21 @@ function filterTransactions() {
   }
   empty.style.display = 'none';
   const fmtDate = d => d ? d.substring(8,10) + '/' + d.substring(5,7) + '/' + d.substring(0,4) : '—';
+
+  const staleAccounts = buildStaleAccounts();
+  const seenStale = new Set();
+
   body.innerHTML = filtered.slice(0, 500).map(t => {
+    const isFirstStale = staleAccounts[t.account] && !seenStale.has(t.account);
+    if (staleAccounts[t.account]) seenStale.add(t.account);
+
     const credit = t.amount > 0  ? Math.round(t.amount).toLocaleString('he-IL')  : '';
     const debit  = t.amount < 0  ? Math.round(-t.amount).toLocaleString('he-IL') : '';
     const bal    = t.balance != null ? Math.round(t.balance).toLocaleString('he-IL') : '—';
     const srcFile = (t.source_file || t.source || '').replace(/^\d+_/, '');
     const accountDisplay = t.account && t.account !== srcFile ? t.account : '—';
-    return `
-    <tr>
+
+    const row = `<tr${isFirstStale ? ' class="tx-stale-row"' : ''}>
       <td class="tx-date">${fmtDate(t.date)}</td>
       <td>${t.description || '—'}</td>
       <td class="tx-doc">${accountDisplay}</td>
@@ -1046,6 +1089,19 @@ function filterTransactions() {
       <td class="tx-num tx-debit">${debit}</td>
       <td class="tx-num tx-bal">${bal}</td>
     </tr>`;
+
+    if (!isFirstStale) return row;
+
+    const { liveBalance, liveDate } = staleAccounts[t.account];
+    const liveDateStr = liveDate
+      ? liveDate.substring(8,10) + '/' + liveDate.substring(5,7) + '/' + liveDate.substring(0,4)
+      : null;
+    const warningRow = `<tr class="tx-stale-warning-row">
+      <td colspan="8">
+        <span class="tx-stale-msg">⚠ דוח תנועות אינו עדכני — יתרה לפי דוח יתרות${liveDateStr ? ' (' + liveDateStr + ')' : ''}: ${fmt(liveBalance)}</span>
+      </td>
+    </tr>`;
+    return row + warningRow;
   }).join('');
 }
 
