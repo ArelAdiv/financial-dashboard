@@ -1213,7 +1213,7 @@ function filterTransactions() {
       return `<tr class="cc-billing-row" style="border-right:3px solid ${color}">
         <td class="tx-date">${fmtDate(t.date)}</td>
         <td><span class="cc-billing-label">${t.description}</span></td>
-        <td class="tx-doc">—</td><td class="tx-doc">—</td><td class="tx-ref"></td>
+        <td class="tx-doc">—</td><td class="tx-doc">—</td><td class="tx-ref"></td><td></td>
         <td class="tx-num tx-credit">${credit}</td>
         <td class="tx-num tx-debit">${debit}</td>
         <td class="tx-num tx-bal">—</td>
@@ -1239,19 +1239,21 @@ function filterTransactions() {
       accountDisplay = t.account && t.account !== srcFile ? t.account : '—';
     }
 
-    // Billing date badge in reference column for CC transactions
-    let refCell = t.reference || '';
+    // הערה column: billing date for CC, notes for bank
+    let noteCell = '';
     if (isCCTx && t.billing_date) {
       const card      = (profile?.creditCards || []).find(c => c.digits === t.card_digits);
       const actualDay = parseInt(t.billing_date.substring(8, 10));
       const isStdDay  = card?.day && actualDay === card.day;
       const bdStr     = fmtDate(t.billing_date);
-      refCell = isStdDay
+      noteCell = isStdDay
         ? `<span class="billing-badge billing-normal">יחויב ב-${bdStr}</span>`
         : `<span class="billing-badge billing-warn">⚠️ יחויב ${bdStr}</span>`;
+    } else if (!isCCTx && t.notes) {
+      noteCell = `<span class="tx-note-text">${t.notes}</span>`;
     }
 
-    // Description: merchant + optional notes
+    // Description: merchant + optional CC notes (installments, foreign currency)
     const descExtra = isCCTx && t.notes
       ? `<div class="tx-notes">${t.notes}</div>`
       : '';
@@ -1264,7 +1266,8 @@ function filterTransactions() {
       <td>${t.description || '—'}${descExtra}</td>
       <td class="tx-doc">${accountDisplay}</td>
       <td class="tx-doc">${isCCTx ? '' : srcFile}</td>
-      <td class="tx-ref">${refCell}</td>
+      <td class="tx-ref">${t.reference || ''}</td>
+      <td class="tx-note">${noteCell}</td>
       <td class="tx-num tx-credit">${credit}</td>
       <td class="tx-num tx-debit">${debit}</td>
       <td class="tx-num tx-bal">${isCCTx ? '' : bal}</td>
@@ -1275,7 +1278,7 @@ function filterTransactions() {
     const { liveBalance, liveDate } = staleAccounts[t.account];
     const liveDateStr = liveDate ? fmtDate(liveDate) : null;
     const warningRow = `<tr class="tx-stale-warning-row">
-      <td colspan="8"><span class="tx-stale-msg">⚠ דוח תנועות אינו עדכני — יתרה לפי דוח יתרות${liveDateStr ? ' (' + liveDateStr + ')' : ''}: ${fmt(liveBalance)}</span></td>
+      <td colspan="9"><span class="tx-stale-msg">⚠ דוח תנועות אינו עדכני — יתרה לפי דוח יתרות${liveDateStr ? ' (' + liveDateStr + ')' : ''}: ${fmt(liveBalance)}</span></td>
     </tr>`;
     return row + warningRow;
   }).join('');
