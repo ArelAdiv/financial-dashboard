@@ -209,6 +209,9 @@ function detectFileType(filePath, rows) {
     if (line.includes('כל המשתמשים') ||
         (line.includes('קטגוריה') && rows.slice(0,5)
           .some(r => r.map(str).join(' ').includes('כרטיס')))) return 'max_cc';
+    // Leumi CC and כאל CC — both use the same column structure
+    if (line.includes('פירוט עסקאות') &&
+        (line.includes('כרטיס') || line.includes('אשראי')))  return 'cal_cc';
     if (line.includes('פירוט עסקאות לחשבון לאומי') ||
         (line.toLowerCase().includes('cal') &&
          line.includes('חשבון')))                    return 'cal_cc';
