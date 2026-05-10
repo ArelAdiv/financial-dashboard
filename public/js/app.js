@@ -1040,7 +1040,7 @@ function buildStaleAccounts() {
 
     const balDiff   = info.balance !== null && Math.abs(info.balance - liveBalance) > 1;
     const dateStale = liveDate && info.date && liveDate > info.date;
-    if (balDiff || dateStale) {
+    if (balDiff && dateStale) {
       stale[account] = { liveBalance, liveDate, lastTxDate: info.date, lastTxBalance: info.balance };
     }
   }
