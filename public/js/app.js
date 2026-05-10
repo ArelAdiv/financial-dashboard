@@ -524,17 +524,25 @@ function renderDashboard() {
   const now = new Date();
   const thisMonth = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
 
-  const lastBalanceByAccount = {};
+  // latestTxByAccount: keyed by account, holds the most recent tx with a balance.
+  // transactions arrive ordered newest-first (id DESC), so first-seen wins.
+  const latestTxByAccount = {};
   let monthlyIncome = 0, monthlyExpenses = 0;
 
   transactions.forEach(t => {
-    if (t.balance) lastBalanceByAccount[t.account] = t.balance;
+    if (t.balance !== null && t.balance !== undefined && !(t.account in latestTxByAccount)) {
+      latestTxByAccount[t.account] = { date: t.date || '', balance: t.balance, source_type: t.source_type };
+    }
     const tMonth = (t.date || t.imported_at || '').substring(0, 7);
     if (tMonth === thisMonth) {
       if (t.amount > 0) monthlyIncome += t.amount;
       else monthlyExpenses += Math.abs(t.amount);
     }
   });
+
+  const lastBalanceByAccount = Object.fromEntries(
+    Object.entries(latestTxByAccount).map(([k, v]) => [k, v.balance])
+  );
 
   const totalAssets = Object.values(lastBalanceByAccount).filter(b => b > 0).reduce((s, b) => s + b, 0);
   const totalLiab = Object.values(lastBalanceByAccount).filter(b => b < 0).reduce((s, b) => s + Math.abs(b), 0);
@@ -596,10 +604,34 @@ function renderDashboard() {
     renderPieChart(totalAssets, 0, totalLiab);
   }
 
+  // Returns the checking balance from whichever source has the more recent date:
+  // either the live balance report or the last transaction.
+  // Matching is done by source_type for known banks, then by account name.
+  const bestBankBalance = (bankName) => {
+    const n = (bankName || '').toLowerCase();
+    const isPoalim = n.includes('פועלים') || n.includes('poalim');
+    const isLeumi  = n.includes('לאומי')  || n.includes('leumi');
+
+    const liveData    = isPoalim ? lb : isLeumi ? llb : null;
+    const liveBalance = liveData?.checking ?? null;
+    const liveDate    = liveData?.report_date ?? null;
+
+    const srcType = isPoalim ? 'poalim_transactions' : isLeumi ? 'leumi_transactions' : null;
+    const txInfo  = srcType
+      ? Object.values(latestTxByAccount).find(a => a.source_type === srcType)
+      : latestTxByAccount[bankName];
+    const txBalance = txInfo?.balance ?? null;
+    const txDate    = txInfo?.date    ?? null;
+
+    if (liveBalance === null || liveDate === null) return txBalance;
+    if (txBalance   === null || txDate   === null) return liveBalance;
+    return liveDate >= txDate ? liveBalance : txBalance;
+  };
+
   renderAccountSection('dash-banks', (profile.banks || []).map(b => ({
     icon: '🏦', name: b.bank,
     type: (b.usage || []).map(usageLabel).join(', ') || 'חשבון בנק',
-    balance: lastBalanceByAccount[b.bank] ?? null,
+    balance: bestBankBalance(b.bank),
     detail: b.owner ? `בעל: ${b.owner}` : ''
   })));
 
