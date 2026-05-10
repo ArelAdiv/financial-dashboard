@@ -1118,7 +1118,12 @@ async function parseFile(filePath, accountName) {
 
     if ((ext === '.xls' || ext === '.xlsx') && isHtmlFile(filePath)) {
       const html = readLeumiHtml(filePath);
-      if (html.includes('פירוט יתרות')) return parseLeumiBalances(filePath, accountName, sourceFile);
+      if (html.includes('פירוט יתרות'))   return parseLeumiBalances(filePath, accountName, sourceFile);
+      // CC export: same column structure as כאל — parse as cal_cc so amounts are negated
+      if (html.includes('פירוט עסקאות') && (html.includes('כרטיס') || html.includes('אשראי'))) {
+        const rows = readExcelRows(filePath);
+        return parseCal(rows, accountName, sourceFile);
+      }
       return parseLeumiTransactions(filePath, accountName, sourceFile);
     }
 
