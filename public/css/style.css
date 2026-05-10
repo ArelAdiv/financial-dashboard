@@ -276,6 +276,19 @@ body {
 .tx-debit  { color: var(--red); }
 .tx-bal    { color: #999; }
 
+/* Bank / activity / category columns */
+.tx-bank     { font-size: 12px; color: #888; white-space: nowrap; }
+.tx-activity { font-size: 11px; color: #aaa; white-space: nowrap; }
+.tx-cat-cell {
+  cursor: pointer; font-size: 12px; white-space: nowrap;
+  min-width: 70px; max-width: 120px;
+}
+.tx-cat-cell:hover { background: #f5f7ff; }
+.tx-cat-empty { color: #ccc; }
+.cat-editor  { display: flex; gap: 4px; align-items: center; white-space: nowrap; }
+.cat-select  { font-size: 12px; padding: 2px 4px; border-radius: 4px; border: 1px solid #ccc; direction: rtl; }
+.cat-custom-input { font-size: 12px; padding: 2px 4px; border-radius: 4px; border: 1px solid #ccc; width: 90px; direction: rtl; }
+
 /* CC transaction rows */
 .tx-cc-row td { background: #fafafa; }
 .tx-notes { font-size: 11px; color: var(--text-secondary); margin-top: 2px; }

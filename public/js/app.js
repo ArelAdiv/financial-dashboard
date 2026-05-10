@@ -1122,6 +1122,33 @@ function renderAccountsFull() {
 // ── Transactions ──────────────────────────────────────────────────────────────
 const CC_SOURCE_TYPES = new Set(['cal_cc', 'isracard_cc', 'max_cc']);
 
+const SOURCE_TO_BANK = {
+  poalim_transactions: 'פועלים',
+  leumi_transactions:  'לאומי',
+  cal_cc:              'כאל',
+  isracard_cc:         'ישראכרט',
+  max_cc:              'מקס',
+};
+
+const TX_CATEGORIES = ['משכורת','מזון','תחבורה','תקשורת','בריאות','ביטוח','חינוך','בידור','קניות','שירותים','חסכון','השקעות','הלוואה'];
+
+function acctSourceType(account) {
+  return transactions.find(t => t.account === account && t.source_type)?.source_type || null;
+}
+
+function bankForTx(t) {
+  if (!CC_SOURCE_TYPES.has(t.source_type)) {
+    return SOURCE_TO_BANK[t.source_type] || '';
+  }
+  // CC: resolve via linked_account on card
+  const card = (profile?.creditCards || []).find(c => c.digits === t.card_digits);
+  if (card?.linked_account) {
+    const st = acctSourceType(card.linked_account);
+    if (st) return SOURCE_TO_BANK[st] || '';
+  }
+  return SOURCE_TO_BANK[t.source_type] || '';
+}
+
 function renderTransactions() {
   const bankAccounts = [...new Set(transactions.filter(t => !CC_SOURCE_TYPES.has(t.source_type)).map(t => t.account))];
   const ccAccounts   = [...new Set(transactions.filter(t =>  CC_SOURCE_TYPES.has(t.source_type)).map(t => t.account))];
@@ -1213,7 +1240,10 @@ function filterTransactions() {
       return `<tr class="cc-billing-row" style="border-right:3px solid ${color}">
         <td class="tx-date">${fmtDate(t.date)}</td>
         <td><span class="cc-billing-label">${t.description}</span></td>
-        <td class="tx-doc">—</td><td class="tx-doc">—</td><td class="tx-ref"></td><td></td>
+        <td class="tx-doc">—</td>
+        <td class="tx-bank">—</td>
+        <td class="tx-activity">אשראי</td>
+        <td class="tx-doc">—</td><td class="tx-ref"></td><td></td><td></td>
         <td class="tx-num tx-credit">${credit}</td>
         <td class="tx-num tx-debit">${debit}</td>
         <td class="tx-num tx-bal">—</td>
@@ -1258,6 +1288,10 @@ function filterTransactions() {
       ? `<div class="tx-notes">${t.notes}</div>`
       : '';
 
+    const bankName = bankForTx(t);
+    const activity = isCCTx ? 'אשראי' : 'עו"ש';
+    const catDisplay = t.category || '';
+
     const rowClass = isFirstStale ? ' class="tx-stale-row"' : isCCTx ? ' class="tx-cc-row"' : '';
     const rowStyle = isCCTx ? ` style="border-right:3px solid ${getCCColor(t.account)}"` : '';
 
@@ -1265,9 +1299,12 @@ function filterTransactions() {
       <td class="tx-date">${fmtDate(t.date)}</td>
       <td>${t.description || '—'}${descExtra}</td>
       <td class="tx-doc">${accountDisplay}</td>
+      <td class="tx-bank">${bankName}</td>
+      <td class="tx-activity">${activity}</td>
       <td class="tx-doc">${isCCTx ? '' : srcFile}</td>
       <td class="tx-ref">${t.reference || ''}</td>
       <td class="tx-note">${noteCell}</td>
+      <td class="tx-cat-cell" data-desc="${escAttr(t.description)}" data-cat="${escAttr(t.category || '')}" onclick="editCategoryCell(this)">${catDisplay || '<span class="tx-cat-empty">—</span>'}</td>
       <td class="tx-num tx-credit">${credit}</td>
       <td class="tx-num tx-debit">${debit}</td>
       <td class="tx-num tx-bal">${isCCTx ? '' : bal}</td>
@@ -1278,10 +1315,86 @@ function filterTransactions() {
     const { liveBalance, liveDate } = staleAccounts[t.account];
     const liveDateStr = liveDate ? fmtDate(liveDate) : null;
     const warningRow = `<tr class="tx-stale-warning-row">
-      <td colspan="9"><span class="tx-stale-msg">⚠ דוח תנועות אינו עדכני — יתרה לפי דוח יתרות${liveDateStr ? ' (' + liveDateStr + ')' : ''}: ${fmt(liveBalance)}</span></td>
+      <td colspan="12"><span class="tx-stale-msg">⚠ דוח תנועות אינו עדכני — יתרה לפי דוח יתרות${liveDateStr ? ' (' + liveDateStr + ')' : ''}: ${fmt(liveBalance)}</span></td>
     </tr>`;
     return row + warningRow;
   }).join('');
+}
+
+// ── Category inline editing ───────────────────────────────────────────────────
+function editCategoryCell(cell) {
+  if (cell.classList.contains('editing')) return;
+  cell.classList.add('editing');
+  const desc   = cell.dataset.desc;
+  const curCat = cell.dataset.cat;
+  const isPredefined = TX_CATEGORIES.includes(curCat);
+  const selectVal    = isPredefined ? curCat : (curCat ? 'אחר' : '');
+
+  const opts = TX_CATEGORIES.map(c =>
+    `<option value="${c}"${c === selectVal ? ' selected' : ''}>${c}</option>`
+  ).join('');
+
+  cell.innerHTML = `<div class="cat-editor">
+    <select class="cat-select">
+      <option value="">—</option>
+      ${opts}
+      <option value="אחר"${selectVal === 'אחר' ? ' selected' : ''}>אחר (חופשי)</option>
+    </select>
+    <input type="text" class="cat-custom-input" style="display:${selectVal === 'אחר' ? 'inline' : 'none'}" value="${escAttr(curCat)}" placeholder="קטגוריה...">
+  </div>`;
+
+  const select = cell.querySelector('.cat-select');
+  const input  = cell.querySelector('.cat-custom-input');
+
+  select.focus();
+
+  select.addEventListener('change', () => {
+    if (select.value === 'אחר') {
+      input.style.display = 'inline';
+      input.focus();
+    } else {
+      input.style.display = 'none';
+      doSaveCat(cell, desc, select.value);
+    }
+  });
+
+  function commitOnBlur() {
+    setTimeout(() => {
+      if (!cell.contains(document.activeElement)) {
+        const cat = select.value === 'אחר' ? input.value.trim() : select.value;
+        doSaveCat(cell, desc, cat);
+      }
+    }, 150);
+  }
+
+  select.addEventListener('blur', commitOnBlur);
+  input.addEventListener('blur', commitOnBlur);
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter')  doSaveCat(cell, desc, input.value.trim());
+    if (e.key === 'Escape') doSaveCat(cell, desc, curCat);
+  });
+}
+
+function doSaveCat(cell, desc, category) {
+  cell.classList.remove('editing');
+  cell.dataset.cat = category || '';
+  cell.innerHTML   = category || '<span class="tx-cat-empty">—</span>';
+  saveTxCategory(desc, category);
+}
+
+async function saveTxCategory(description, category) {
+  try {
+    await fetch('/api/categories', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ description, category })
+    });
+    for (const t of transactions) {
+      if (t.description === description) t.category = category || null;
+    }
+  } catch (e) {
+    console.error('category save failed', e);
+  }
 }
 
 // ── Upload ────────────────────────────────────────────────────────────────────

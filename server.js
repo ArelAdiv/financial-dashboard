@@ -392,6 +392,14 @@ app.delete('/api/transactions', (req, res) => {
   res.json({ ok: true });
 });
 
+app.post('/api/categories', (req, res) => {
+  const { description, category } = req.body;
+  if (!description) return res.status(400).json({ error: 'missing description' });
+  const info = db.prepare('UPDATE transactions SET category = ? WHERE description = ?')
+    .run(category || null, description);
+  res.json({ ok: true, updated: info.changes });
+});
+
 app.post('/api/ai', async (req, res) => {
   const { messages, systemContext } = req.body;
   try {
