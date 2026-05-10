@@ -1132,44 +1132,79 @@ const SOURCE_TO_BANK = {
 
 const TX_CATEGORIES = ['משכורת','מזון','תחבורה','תקשורת','בריאות','ביטוח','חינוך','בידור','קניות','שירותים','חסכון','השקעות','הלוואה'];
 
-function acctSourceType(account) {
-  return transactions.find(t => t.account === account && t.source_type)?.source_type || null;
+// Values that Cal stores in the category column that represent payment type, not consumer category
+const PAYMENT_TYPE_CATS = new Set([
+  'עסקה רגילה','עסקה רגיל','רגילה','רגיל','הוראת קבע',
+  'תשלומים','עסקאות בתשלומים','קניות בתשלומים','עסקה בתשלומים'
+]);
+function isPaymentTypeCat(cat) {
+  if (!cat) return false;
+  return PAYMENT_TYPE_CATS.has(cat) || cat.startsWith('עסקה') || cat.includes('תשלומים');
 }
 
 function bankForTx(t) {
   if (!CC_SOURCE_TYPES.has(t.source_type)) {
     return SOURCE_TO_BANK[t.source_type] || '';
   }
-  // CC: linked_account stores the bank name directly
-  const card = (profile?.creditCards || []).find(c => c.digits === t.card_digits);
-  if (card?.linked_account) return card.linked_account;
-  return SOURCE_TO_BANK[t.source_type] || '';
+  // 1. Try by card_digits → profile card → linked_account (already a bank name)
+  if (t.card_digits) {
+    const card = (profile?.creditCards || []).find(c => c.digits === t.card_digits);
+    if (card?.linked_account) return card.linked_account;
+  }
+  // 2. Fallback: match CC account digits against bank account digits
+  const ccNum = (t.account || '').replace(/[^0-9]/g, '');
+  if (ccNum.length >= 6) {
+    for (const tx of transactions) {
+      if (CC_SOURCE_TYPES.has(tx.source_type) || !tx.account || !tx.source_type) continue;
+      const bNum = tx.account.replace(/[^0-9]/g, '');
+      if (bNum.length >= 6 && (bNum.includes(ccNum) || ccNum.includes(bNum))) {
+        return SOURCE_TO_BANK[tx.source_type] || '';
+      }
+    }
+  }
+  return '';
 }
 
 function paymentType(t) {
   const notes = t.notes || '';
+  const cat   = t.category || '';
   const desc  = t.description || '';
 
-  // Installment pattern in notes: "2 מתוך 6", "2/6", "2 מ 6", "2 מ'6"
-  const m = notes.match(/(\d+)\s*(?:מתוך|מ['`״]?|\/)\s*(\d+)/);
+  // Installment pattern in notes: "2 מתוך 6", "2/6", "2 מ 6"
+  const m = notes.match(/(\d+)\s*(?:מתוך|מ['`״]?\s*|\/)\s*(\d+)/);
   if (m) return `${m[1]} מ-${m[2]}`;
 
   // Standing order
-  if (notes.includes('הוראת קבע') || desc.includes('הוראת קבע')) return 'הוראת קבע';
+  if (cat.includes('הוראת קבע') || notes.includes('הוראת קבע') || desc.includes('הוראת קבע'))
+    return 'הוראת קבע';
+
+  // Payment type stored in category field by Cal
+  if (isPaymentTypeCat(cat)) {
+    if (cat.includes('תשלומים')) return 'תשלומים';
+    return 'רגיל';
+  }
 
   return '';
 }
 
 function renderTransactions() {
-  // Ensure thead always has the correct 13 columns (fixes stale HTML cache)
+  // Ensure thead always has the correct 13 columns in the right order
   const theadRow = document.querySelector('#tx-table thead tr');
-  if (theadRow && theadRow.children.length !== 13) {
+  if (theadRow) {
     theadRow.innerHTML =
-      '<th>תאריך</th><th>תיאור</th><th>מס חשבון</th>' +
-      '<th>בנק</th><th>פעילות</th>' +
-      '<th class="th-ltr">אסמכתא</th><th>הערה</th><th>אופן תשלום</th><th>קטגוריה</th>' +
-      '<th class="tx-doc-th">מסמך</th>' +
-      '<th class="th-num">זכות</th><th class="th-num">חובה</th><th class="th-num">יתרה</th>';
+      '<th style="width:7%">תאריך</th>' +
+      '<th style="width:14%">תיאור</th>' +
+      '<th style="width:8%">קטגוריה</th>' +
+      '<th style="width:9%">מס חשבון</th>' +
+      '<th style="width:6%">בנק</th>' +
+      '<th style="width:5%">פעילות</th>' +
+      '<th style="width:7%" class="th-ltr">אסמכתא</th>' +
+      '<th style="width:10%">הערה</th>' +
+      '<th style="width:7%">אופן תשלום</th>' +
+      '<th style="width:7%">מסמך</th>' +
+      '<th style="width:6%" class="th-num">זכות</th>' +
+      '<th style="width:6%" class="th-num">חובה</th>' +
+      '<th style="width:5%" class="th-num">יתרה</th>';
   }
 
   const bankAccounts = [...new Set(transactions.filter(t => !CC_SOURCE_TYPES.has(t.source_type)).map(t => t.account))];
@@ -1262,10 +1297,11 @@ function filterTransactions() {
       return `<tr class="cc-billing-row" style="border-right:3px solid ${color}">
         <td class="tx-date">${fmtDate(t.date)}</td>
         <td><span class="cc-billing-label">${t.description}</span></td>
+        <td></td>
         <td class="tx-doc">—</td>
         <td class="tx-bank">—</td>
         <td class="tx-activity">אשראי</td>
-        <td class="tx-ref"></td><td></td><td></td><td></td>
+        <td class="tx-ref"></td><td></td><td></td>
         <td class="tx-doc-sm">—</td>
         <td class="tx-num tx-credit">${credit}</td>
         <td class="tx-num tx-debit">${debit}</td>
@@ -1313,8 +1349,10 @@ function filterTransactions() {
 
     const bankName = bankForTx(t);
     const activity = isCCTx ? 'אשראי' : 'עו"ש';
-    const catDisplay = t.category || '';
-    const pmtType = paymentType(t);
+    const pmtType  = paymentType(t);
+    // Show consumer category; skip values that are actually payment-type metadata from Cal
+    const catDisplay = isPaymentTypeCat(t.category) ? '' : (t.category || '');
+    const catStored  = isPaymentTypeCat(t.category) ? '' : (t.category || '');
 
     const rowClass = isFirstStale ? ' class="tx-stale-row"' : isCCTx ? ' class="tx-cc-row"' : '';
     const rowStyle = isCCTx ? ` style="border-right:3px solid ${getCCColor(t.account)}"` : '';
@@ -1322,13 +1360,13 @@ function filterTransactions() {
     const row = `<tr${rowClass}${rowStyle}>
       <td class="tx-date">${fmtDate(t.date)}</td>
       <td>${t.description || '—'}${descExtra}</td>
+      <td class="tx-cat-cell" data-desc="${escAttr(t.description)}" data-cat="${escAttr(catStored)}" onclick="editCategoryCell(this)">${catDisplay || '<span class="tx-cat-empty">—</span>'}</td>
       <td class="tx-doc">${accountDisplay}</td>
       <td class="tx-bank">${bankName}</td>
       <td class="tx-activity">${activity}</td>
       <td class="tx-ref">${t.reference || ''}</td>
       <td class="tx-note">${noteCell}</td>
       <td class="tx-pmt">${pmtType}</td>
-      <td class="tx-cat-cell" data-desc="${escAttr(t.description)}" data-cat="${escAttr(t.category || '')}" onclick="editCategoryCell(this)">${catDisplay || '<span class="tx-cat-empty">—</span>'}</td>
       <td class="tx-doc-sm">${isCCTx ? '' : srcFile}</td>
       <td class="tx-num tx-credit">${credit}</td>
       <td class="tx-num tx-debit">${debit}</td>

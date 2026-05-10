@@ -256,7 +256,7 @@ body {
 
 /* TRANSACTIONS TABLE */
 .tx-card { overflow-x: auto; }
-.tx-table { width: 100%; min-width: 820px; border-collapse: collapse; font-size: 13px; }
+.tx-table { width: 100%; min-width: 900px; border-collapse: collapse; font-size: 13px; table-layout: fixed; }
 .tx-table th {
   text-align: right; padding: 8px 12px;
   border-bottom: 1px solid var(--border);
