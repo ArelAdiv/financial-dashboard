@@ -232,6 +232,7 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
 // Labels and source types for known profile keys
 const PROFILE_KEY_META = {
   live_balances:    { source_type: 'poalim_daily_balances', label: 'DailyBalances.xlsx' },
+  leumi_balances:   { source_type: 'leumi_balances',        label: 'לאומי — יתרות' },
   balance_snapshot: { source_type: 'poalim_balances',       label: 'דוח יתרות' },
   mortgage_details: { source_type: 'poalim_mortgage',       label: 'דוח משכנתא' },
 };

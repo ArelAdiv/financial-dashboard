@@ -565,6 +565,7 @@ function renderDashboard() {
     document.getElementById('m-saving').className = 'metric-value green';
 
     renderLiveBalances();
+    renderLeumiBalances();
     renderBalanceSnapshot();
     renderPieChart(lb.checking ?? 0, investTotal, lbLiab);
   } else {
@@ -578,6 +579,10 @@ function renderDashboard() {
     document.getElementById('m-saving').textContent = (monthlyIncome || monthlyExpenses) ? fmt(monthlySavings) : '₪ —';
     document.getElementById('m-saving').className = 'metric-value';
 
+    renderLiveBalances();
+    renderLeumiBalances();
+    renderBalanceSnapshot();
+    renderPieChart(totalAssets, 0, totalLiab);
   }
 
   renderAccountSection('dash-banks', (profile.banks || []).map(b => ({
@@ -697,6 +702,77 @@ function renderLiveBalances() {
     html += `<div class="lb-net-worth">
       <span>שווי נטו</span>
       <span class="lb-val ${nwCls}" style="font-size:16px">${sign}${fmt(Math.abs(lb.net_worth))}</span>
+    </div>`;
+  }
+
+  el.innerHTML = html;
+}
+
+// ── Leumi balances card (sheet001.htm) ───────────────────────────────────────
+function renderLeumiBalances() {
+  const card   = document.getElementById('card-leumi-balances');
+  const el     = document.getElementById('dash-leumi-balances');
+  const dateEl = document.getElementById('leumi-balances-date');
+  if (!card || !el) return;
+
+  const lb = profile?.leumi_balances;
+  if (!lb) { card.style.display = 'none'; return; }
+  card.style.display = '';
+
+  const d = lb.report_date;
+  if (dateEl) dateEl.textContent = d
+    ? 'נכון ל-' + d.substring(8,10) + '/' + d.substring(5,7) + '/' + d.substring(0,4)
+    : '';
+
+  const row = (label, value, cls, sub) => {
+    if (value === null || value === undefined) return '';
+    const sign = cls === 'neg' ? '-' : '';
+    return `<div class="lb-row${sub ? ' lb-sub' : ''}">
+      <span class="lb-label">${label}</span>
+      <span class="lb-val ${cls}">${sign}${fmt(Math.abs(value))}</span>
+    </div>`;
+  };
+
+  let html = '<div class="lb-grid">';
+
+  // עו"ש
+  html += '<div class="lb-section">';
+  html += '<div class="lb-section-title">🏦 עו"ש</div>';
+  html += row('יתרה', lb.checking, (lb.checking ?? 0) >= 0 ? 'pos' : 'neg', false);
+  html += '</div>';
+
+  // כרטיסי אשראי
+  if (lb.credit_card_debt !== null && lb.credit_card_debt !== undefined) {
+    html += '<div class="lb-section">';
+    html += '<div class="lb-section-title">💳 כרטיסי אשראי</div>';
+    html += row('חיוב כרטיסים', lb.credit_card_debt, 'neg', false);
+    html += '</div>';
+  }
+
+  // הלוואות
+  if (lb.loans?.length || lb.loans_total !== null) {
+    html += '<div class="lb-section">';
+    html += '<div class="lb-section-title">📋 הלוואות</div>';
+    for (const loan of (lb.loans || [])) {
+      const lbl = loan.loan_id ? `${loan.name} (${loan.loan_id})` : loan.name;
+      html += row(lbl, loan.balance, 'neg', lb.loans.length > 1);
+    }
+    if (lb.loans_total !== null && lb.loans.length > 1)
+      html += row('סה"כ הלוואות', lb.loans_total, 'neg', false);
+    else if (lb.loans_total !== null && !lb.loans.length)
+      html += row('סה"כ הלוואות', lb.loans_total, 'neg', false);
+    html += '</div>';
+  }
+
+  html += '</div>'; // lb-grid
+
+  // Net summary bar
+  const net = (lb.total_credit ?? 0) + (lb.total_debit ?? 0);
+  if (lb.total_credit !== null || lb.total_debit !== null) {
+    const nwCls = net >= 0 ? 'pos' : 'neg';
+    html += `<div class="lb-net-worth">
+      <span>יתרה נטו</span>
+      <span class="lb-val ${nwCls}" style="font-size:16px">${net < 0 ? '-' : ''}${fmt(Math.abs(net))}</span>
     </div>`;
   }
 
@@ -963,6 +1039,10 @@ async function doUpload(file) {
         let successText;
         if (data.profileUpdated === 'live_balances' && profile.live_balances?.checking != null) {
           successText = `נטענו נתוני יתרות בהצלחה — יתרת עו"ש: ${fmt(profile.live_balances.checking)}`;
+        } else if (data.profileUpdated === 'leumi_balances' && profile.leumi_balances) {
+          const llb = profile.leumi_balances;
+          const loanAbs = Math.abs(llb.loans_total ?? 0);
+          successText = `נטענו נתוני יתרות לאומי בהצלחה — עו"ש: ${fmt(llb.checking)} | חוב הלוואות: ${fmt(loanAbs)}`;
         } else {
           const count = data.inserted || 0;
           successText = `דוח יתרות עודכן מ-${data.filename}${count > 0 ? ` — ${count} סעיפים נקלטו` : ''}`;
@@ -1092,6 +1172,7 @@ async function loadUploads() {
       poalim_balances:       'פועלים — יתרות',
       poalim_mortgage:       'פועלים — משכנתא',
       poalim_daily_balances: 'פועלים — יתרות יומיות',
+      leumi_balances:        'לאומי — יתרות עדכניות',
       leumi_transactions:    'לאומי — עסקאות',
       leumi_balances:        'לאומי — יתרות',
       isracard_cc:           'ישראכרט',
@@ -1128,7 +1209,7 @@ async function loadUploads() {
             return `
             <tr>
               <td class="uploads-filename" title="${r.source_file || ''}">${
-                ({ live_balances: 'DailyBalances (יתרות)', balance_snapshot: 'דוח יתרות', mortgage_details: 'דוח משכנתא' })[r.source_file]
+                ({ live_balances: 'DailyBalances (יתרות)', leumi_balances: 'לאומי — יתרות', balance_snapshot: 'דוח יתרות', mortgage_details: 'דוח משכנתא' })[r.source_file]
                 || (r.source_file || '').replace(/^\d+_/, '')
               }</td>
               <td>${r.account || '—'}</td>

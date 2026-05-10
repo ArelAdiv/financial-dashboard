@@ -641,101 +641,133 @@ function parseLeumiTransactions(filePath, accountName, sourceFile) {
   return txResult(transactions, 'leumi_transactions', { found, imported: transactions.length, skipped });
 }
 
-// ── Leumi: Balances (HTML-based XLS) ─────────────────────────────────────────
+// ── Leumi: Balances (sheet001.htm / פירוט יתרות) ─────────────────────────────
 function parseLeumiBalances(filePath, accountName, sourceFile) {
   const html = readLeumiHtml(filePath);
 
-  // Frameset → user must upload the inner sheet
   if (isFrameset(html)) {
     console.log('[leumi_balances] detected frameset');
     return txResult([], 'leumi_balances', { found: 0, imported: 0, skipped: 0 }, LEUMI_FRAMESET_WARNING);
   }
 
-  // Extract all tables; pick the largest one with balance keywords
+  // Strip RTL/LTR Unicode markers and normalise whitespace from a cell value
+  const clean = s => (s || '').toString()
+    .replace(/[‎‏‪‫‬‭‮]/g, '')
+    .replace(/\xa0/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  const parseAmt = s => parseNum(clean(s));
+
+  // Extract all tables; use the largest one
   const tables = parseHtmlTables(html);
-  let rows = findTableWithKeywords(tables, ['יתרה']);
-  if (!rows.length) {
-    // Fall back to xlsx
-    try {
-      const wb = xlsx.readFile(filePath, { cellDates: false, raw: false });
-      for (const name of wb.SheetNames) {
-        const ws = wb.Sheets[name];
-        const r  = xlsx.utils.sheet_to_json(ws, { header: 1, defval: '', raw: false });
-        if (r.length > rows.length) rows = r;
-      }
-    } catch {}
-  }
+  let rawRows = tables.reduce((best, t) => t.length > best.length ? t : best, []);
+  const rows  = rawRows.map(row => row.map(clean));
 
   console.log(`[leumi_balances] rows=${rows.length}`);
 
-  let report_date = null;
-  let currentType = null;
-  const sections = {};
+  let report_date      = null;
+  let checking         = null;
+  let credit_card_debt = null;
+  let loans_total      = null;
+  let total_credit     = null;
+  let total_debit      = null;
+  const loans          = [];
 
-  for (const row of rows) {
-    const cells = row.map(str);
+  let section = null; // 'checking' | 'credit' | 'loans'
+
+  // Keywords that mark column-header rows to skip
+  const HEADER_KEYWORDS = ['חשבון', 'נכון לתאריך', 'יתרה בש"ח', 'כרטיס', 'מועד החיוב',
+                           'הלוואה', 'סכום הלוואה', 'תאריך סיום', 'יתרה משוערכת', 'סכום החיוב'];
+
+  for (let i = 0; i < rows.length; i++) {
+    const cells = rows[i];
     const line  = cells.join(' ');
 
+    // ── Extract report date from any row ──────────────────────────────────────
     if (!report_date) {
       const m = line.match(/(\d{1,2}[\/\.]\d{1,2}[\/\.]\d{2,4})/);
       if (m) report_date = normalizeDate(m[1]);
     }
 
-    const detectedType = detectBalanceType(line);
-    if (detectedType) currentType = detectedType;
-    if (!currentType) continue;
+    // ── Section headers ───────────────────────────────────────────────────────
+    if (line.includes('עובר ושב'))       { section = 'checking'; continue; }
+    if (line.includes('כרטיסי אשראי'))   { section = 'credit';   continue; }
+    if (line.includes('הלוואות'))         { section = 'loans';    continue; }
 
-    const nums = cells.map(parseNum).filter(n => n !== null && n !== 0);
-    if (!nums.length) continue;
+    // ── Summary row — יתרות בזכות / יתרות בחובה ─────────────────────────────
+    if (line.includes('יתרות בזכות') || line.includes('יתרות בחובה')) {
+      const mc = line.match(/יתרות בזכות[:\s₪]*([\d,.\-]+)/);
+      const md = line.match(/יתרות בחובה[:\s₪]*([\-\d,.‎‏]+)/);
+      if (mc) total_credit = parseAmt(mc[1]);
+      if (md) total_debit  = parseAmt(md[1].replace(/-/, '')) !== null
+                              ? -Math.abs(parseAmt(md[1]) ?? 0) : null;
+      continue;
+    }
 
-    const label = cells.find(c => c.length >= 2 && !/^[\d,.\-()\s₪%]+$/.test(c));
-    const entry = {
-      label:     label || '',
-      balance:   nums[nums.length - 1],
-      isSummary: isSummaryRow(row)
-    };
-    if (currentType === 'checking' && nums.length >= 2) entry.credit_line = nums[0];
+    if (!section) continue;
 
-    if (!sections[currentType]) sections[currentType] = [];
-    sections[currentType].push(entry);
-  }
+    // ── Skip column-header rows ───────────────────────────────────────────────
+    if (HEADER_KEYWORDS.some(kw => cells.includes(kw))) continue;
 
-  const LABELS = {
-    checking: 'עו"ש', savings: 'חסכונות', loan: 'הלוואות',
-    mortgage: 'משכנתא', investments: 'השקעות', pension: 'פנסיה / גמל'
-  };
-  const accounts = [];
-  const ORDER = ['checking', 'savings', 'investments', 'pension', 'mortgage', 'loan'];
+    // ── Section total rows: סה"כ ─────────────────────────────────────────────
+    const isTotalRow = isSummaryRow(cells) || line.includes('סה"כ') || line.includes('סה״כ');
 
-  for (const type of ORDER) {
-    const items = sections[type] || [];
-    if (!items.length) continue;
+    // ── CHECKING ──────────────────────────────────────────────────────────────
+    if (section === 'checking' && !isTotalRow) {
+      // Data row: ['662-20596/69', '', '', '10/05/2026', '13,811.13', '']
+      const nums = cells.map(parseAmt).filter(n => n !== null);
+      if (nums.length) checking = nums[nums.length - 1]; // last number is balance
+    }
 
-    const detail  = items.filter(i => !i.isSummary && i.label);
-    const summary = items.filter(i =>  i.isSummary);
+    // ── CREDIT CARDS ──────────────────────────────────────────────────────────
+    if (section === 'credit' && isTotalRow) {
+      const nums = cells.map(parseAmt).filter(n => n !== null && n !== 0);
+      if (nums.length) credit_card_debt = -Math.abs(nums[nums.length - 1]);
+    }
 
-    if (detail.length === 1) {
-      const d = detail[0];
-      accounts.push({ type, label: d.label || LABELS[type], balance: d.balance,
-                      ...(d.credit_line != null ? { credit_line: d.credit_line } : {}) });
-    } else if (detail.length > 1) {
-      if (summary.length) {
-        accounts.push({ type, label: LABELS[type], balance: summary[0].balance, isSectionTotal: true });
+    // ── LOANS ─────────────────────────────────────────────────────────────────
+    if (section === 'loans') {
+      if (isTotalRow) {
+        const nums = cells.map(parseAmt).filter(n => n !== null && n !== 0);
+        if (nums.length) loans_total = -Math.abs(nums[nums.length - 1]);
+      } else if (cells[0] && cells[0].length > 2) {
+        // Data row: ['מט"י ז"א ... 2529-1/3', '662-...', '30,000', '11/12/2027', '08/05/2026', '20,780.55']
+        // Split name from loan_id (trailing alphanumeric-dash-slash pattern)
+        const nameIdMatch = cells[0].match(/^(.+?)\s+([\d]{3,}[\-\/][\d\/\-]+)$/);
+        const loanName    = nameIdMatch ? nameIdMatch[1].trim() : cells[0];
+        const loanId      = nameIdMatch ? nameIdMatch[2] : '';
+
+        const originalAmt = parseAmt(cells[2]);
+        const endDate     = normalizeDate(cells[3]);
+        const balance     = parseAmt(cells[5] || cells[cells.length - 1]);
+
+        if (balance !== null && balance !== 0) {
+          loans.push({
+            name:            loanName,
+            loan_id:         loanId,
+            original_amount: originalAmt,
+            end_date:        endDate,
+            balance:         -Math.abs(balance)
+          });
+        }
       }
-      for (const d of detail) {
-        accounts.push({ type, label: d.label, balance: d.balance, isSub: true,
-                        ...(d.credit_line != null ? { credit_line: d.credit_line } : {}) });
-      }
-    } else if (summary.length) {
-      accounts.push({ type, label: LABELS[type], balance: summary[0].balance });
     }
   }
 
-  console.log(`[leumi_balances] report_date=${report_date} accounts:`, accounts);
+  if (loans_total === null && loans.length)
+    loans_total = loans.reduce((s, l) => s + l.balance, 0);
+
+  const leumi_balances = {
+    report_date, checking, credit_card_debt,
+    loans, loans_total, total_credit, total_debit,
+    updated_at: new Date().toISOString()
+  };
+
+  console.log('[leumi_balances]', leumi_balances);
   return {
-    type: 'profile_data', profileKey: 'balance_snapshot',
-    profileData: buildBalanceSnapshot(accounts, report_date, 'leumi_balances'),
-    sourceType: 'leumi_balances'
+    type: 'profile_data', profileKey: 'leumi_balances',
+    profileData: leumi_balances, sourceType: 'leumi_balances'
   };
 }
 
