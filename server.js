@@ -106,6 +106,11 @@ function applyAliases(transactions) {
 
 // ── Multer ────────────────────────────────────────────────────────────────────
 app.use(express.json({ limit: '50mb' }));
+app.use((req, res, next) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  next();
+});
 app.use(express.static(path.join(__dirname, 'public')));
 
 const storage = multer.diskStorage({
@@ -390,6 +395,14 @@ app.delete('/api/transactions', (req, res) => {
   if (account) db.prepare('DELETE FROM transactions WHERE account = ?').run(account);
   else         db.prepare('DELETE FROM transactions').run();
   res.json({ ok: true });
+});
+
+app.post('/api/categories', (req, res) => {
+  const { description, category } = req.body;
+  if (!description) return res.status(400).json({ error: 'missing description' });
+  const info = db.prepare('UPDATE transactions SET category = ? WHERE description = ?')
+    .run(category || null, description);
+  res.json({ ok: true, updated: info.changes });
 });
 
 app.post('/api/ai', async (req, res) => {
