@@ -1018,9 +1018,10 @@ function buildStaleAccounts() {
   const stale = {};
   if (!profile?.live_balances && !profile?.leumi_balances) return stale;
 
-  // Find the most recent transaction per account (transactions arrive newest-first)
+  // Find the most recent transaction per account, sorted by date (same order as the table)
   const acctInfo = {};
-  for (const t of transactions) {
+  const sorted = [...transactions].sort((a, b) => (b.date || '').localeCompare(a.date || '') || b.id - a.id);
+  for (const t of sorted) {
     if (!(t.account in acctInfo)) {
       acctInfo[t.account] = { date: t.date || '', balance: t.balance, source_type: t.source_type };
     }
@@ -1040,7 +1041,6 @@ function buildStaleAccounts() {
 
     const balDiff   = info.balance !== null && Math.abs(info.balance - liveBalance) > 1;
     const dateStale = liveDate && info.date && liveDate > info.date;
-    console.log('[stale]', account, '| txBal:', info.balance, '| liveBal:', liveBalance, '| diff:', info.balance !== null ? Math.abs(info.balance - liveBalance) : 'n/a', '| txDate:', info.date, '| liveDate:', liveDate, '| balDiff:', balDiff, '| dateStale:', dateStale, '| srcType:', info.source_type);
     if (balDiff && dateStale) {
       stale[account] = { liveBalance, liveDate, lastTxDate: info.date, lastTxBalance: info.balance };
     }
