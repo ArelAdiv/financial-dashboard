@@ -276,9 +276,12 @@ body {
 .tx-debit  { color: var(--red); }
 .tx-bal    { color: #999; }
 
-/* Bank / activity / category columns */
+/* Bank / activity / payment / category / doc columns */
 .tx-bank     { font-size: 12px; color: #888; white-space: nowrap; }
 .tx-activity { font-size: 11px; color: #aaa; white-space: nowrap; }
+.tx-pmt      { font-size: 11px; color: #666; white-space: nowrap; }
+.tx-doc-th   { font-size: 12px; max-width: 80px; color: #aaa; }
+.tx-doc-sm   { color: #bbb; font-size: 11px; max-width: 70px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tx-cat-cell {
   cursor: pointer; font-size: 12px; white-space: nowrap;
   min-width: 70px; max-width: 120px;

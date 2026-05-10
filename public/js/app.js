@@ -1140,23 +1140,35 @@ function bankForTx(t) {
   if (!CC_SOURCE_TYPES.has(t.source_type)) {
     return SOURCE_TO_BANK[t.source_type] || '';
   }
-  // CC: resolve via linked_account on card
+  // CC: linked_account stores the bank name directly
   const card = (profile?.creditCards || []).find(c => c.digits === t.card_digits);
-  if (card?.linked_account) {
-    const st = acctSourceType(card.linked_account);
-    if (st) return SOURCE_TO_BANK[st] || '';
-  }
+  if (card?.linked_account) return card.linked_account;
   return SOURCE_TO_BANK[t.source_type] || '';
 }
 
+function paymentType(t) {
+  const notes = t.notes || '';
+  const desc  = t.description || '';
+
+  // Installment pattern in notes: "2 מתוך 6", "2/6", "2 מ 6", "2 מ'6"
+  const m = notes.match(/(\d+)\s*(?:מתוך|מ['`״]?|\/)\s*(\d+)/);
+  if (m) return `${m[1]} מ-${m[2]}`;
+
+  // Standing order
+  if (notes.includes('הוראת קבע') || desc.includes('הוראת קבע')) return 'הוראת קבע';
+
+  return '';
+}
+
 function renderTransactions() {
-  // Ensure thead always has the correct 12 columns (fixes stale HTML cache)
+  // Ensure thead always has the correct 13 columns (fixes stale HTML cache)
   const theadRow = document.querySelector('#tx-table thead tr');
-  if (theadRow && theadRow.children.length !== 12) {
+  if (theadRow && theadRow.children.length !== 13) {
     theadRow.innerHTML =
       '<th>תאריך</th><th>תיאור</th><th>מס חשבון</th>' +
-      '<th>בנק</th><th>פעילות</th><th>מסמך</th>' +
-      '<th class="th-ltr">אסמכתא</th><th>הערה</th><th>קטגוריה</th>' +
+      '<th>בנק</th><th>פעילות</th>' +
+      '<th class="th-ltr">אסמכתא</th><th>הערה</th><th>אופן תשלום</th><th>קטגוריה</th>' +
+      '<th class="tx-doc-th">מסמך</th>' +
       '<th class="th-num">זכות</th><th class="th-num">חובה</th><th class="th-num">יתרה</th>';
   }
 
@@ -1253,7 +1265,8 @@ function filterTransactions() {
         <td class="tx-doc">—</td>
         <td class="tx-bank">—</td>
         <td class="tx-activity">אשראי</td>
-        <td class="tx-doc">—</td><td class="tx-ref"></td><td></td><td></td>
+        <td class="tx-ref"></td><td></td><td></td><td></td>
+        <td class="tx-doc-sm">—</td>
         <td class="tx-num tx-credit">${credit}</td>
         <td class="tx-num tx-debit">${debit}</td>
         <td class="tx-num tx-bal">—</td>
@@ -1301,6 +1314,7 @@ function filterTransactions() {
     const bankName = bankForTx(t);
     const activity = isCCTx ? 'אשראי' : 'עו"ש';
     const catDisplay = t.category || '';
+    const pmtType = paymentType(t);
 
     const rowClass = isFirstStale ? ' class="tx-stale-row"' : isCCTx ? ' class="tx-cc-row"' : '';
     const rowStyle = isCCTx ? ` style="border-right:3px solid ${getCCColor(t.account)}"` : '';
@@ -1311,10 +1325,11 @@ function filterTransactions() {
       <td class="tx-doc">${accountDisplay}</td>
       <td class="tx-bank">${bankName}</td>
       <td class="tx-activity">${activity}</td>
-      <td class="tx-doc">${isCCTx ? '' : srcFile}</td>
       <td class="tx-ref">${t.reference || ''}</td>
       <td class="tx-note">${noteCell}</td>
+      <td class="tx-pmt">${pmtType}</td>
       <td class="tx-cat-cell" data-desc="${escAttr(t.description)}" data-cat="${escAttr(t.category || '')}" onclick="editCategoryCell(this)">${catDisplay || '<span class="tx-cat-empty">—</span>'}</td>
+      <td class="tx-doc-sm">${isCCTx ? '' : srcFile}</td>
       <td class="tx-num tx-credit">${credit}</td>
       <td class="tx-num tx-debit">${debit}</td>
       <td class="tx-num tx-bal">${isCCTx ? '' : bal}</td>
@@ -1325,7 +1340,7 @@ function filterTransactions() {
     const { liveBalance, liveDate } = staleAccounts[t.account];
     const liveDateStr = liveDate ? fmtDate(liveDate) : null;
     const warningRow = `<tr class="tx-stale-warning-row">
-      <td colspan="12"><span class="tx-stale-msg">⚠ דוח תנועות אינו עדכני — יתרה לפי דוח יתרות${liveDateStr ? ' (' + liveDateStr + ')' : ''}: ${fmt(liveBalance)}</span></td>
+      <td colspan="13"><span class="tx-stale-msg">⚠ דוח תנועות אינו עדכני — יתרה לפי דוח יתרות${liveDateStr ? ' (' + liveDateStr + ')' : ''}: ${fmt(liveBalance)}</span></td>
     </tr>`;
     return row + warningRow;
   }).join('');
