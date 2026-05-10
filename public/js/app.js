@@ -1385,15 +1385,27 @@ function filterTransactions() {
 }
 
 // ── Category inline editing ───────────────────────────────────────────────────
+function getAvailableCategories() {
+  const cats = new Set(TX_CATEGORIES);
+  // Add categories already used in transactions (consumer categories only)
+  for (const t of transactions) {
+    if (t.category && !isPaymentTypeCat(t.category)) cats.add(t.category);
+  }
+  // Add user-created categories from localStorage
+  for (const c of JSON.parse(localStorage.getItem('user_categories') || '[]')) cats.add(c);
+  return [...cats].sort((a, b) => a.localeCompare(b, 'he'));
+}
+
 function editCategoryCell(cell) {
   if (cell.classList.contains('editing')) return;
   cell.classList.add('editing');
   const desc   = cell.dataset.desc;
   const curCat = cell.dataset.cat;
-  const isPredefined = TX_CATEGORIES.includes(curCat);
+  const allCats = getAvailableCategories();
+  const isPredefined = allCats.includes(curCat);
   const selectVal    = isPredefined ? curCat : (curCat ? 'אחר' : '');
 
-  const opts = TX_CATEGORIES.map(c =>
+  const opts = allCats.map(c =>
     `<option value="${c}"${c === selectVal ? ' selected' : ''}>${c}</option>`
   ).join('');
 
@@ -1440,8 +1452,14 @@ function editCategoryCell(cell) {
 
 function doSaveCat(cell, desc, category) {
   cell.classList.remove('editing');
-  cell.dataset.cat = category || '';
-  cell.innerHTML   = category || '<span class="tx-cat-empty">—</span>';
+  // Persist new user-created categories to localStorage
+  if (category && !TX_CATEGORIES.includes(category) && !isPaymentTypeCat(category)) {
+    const stored = JSON.parse(localStorage.getItem('user_categories') || '[]');
+    if (!stored.includes(category)) {
+      stored.push(category);
+      localStorage.setItem('user_categories', JSON.stringify(stored));
+    }
+  }
   saveTxCategory(desc, category);
 }
 
@@ -1452,9 +1470,12 @@ async function saveTxCategory(description, category) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ description, category })
     });
+    // Update all matching transactions in local array
     for (const t of transactions) {
       if (t.description === description) t.category = category || null;
     }
+    // Re-render so all rows with same description show the new category
+    filterTransactions();
   } catch (e) {
     console.error('category save failed', e);
   }
