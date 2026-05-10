@@ -1150,6 +1150,16 @@ function bankForTx(t) {
 }
 
 function renderTransactions() {
+  // Ensure thead always has the correct 12 columns (fixes stale HTML cache)
+  const theadRow = document.querySelector('#tx-table thead tr');
+  if (theadRow && theadRow.children.length !== 12) {
+    theadRow.innerHTML =
+      '<th>תאריך</th><th>תיאור</th><th>מס חשבון</th>' +
+      '<th>בנק</th><th>פעילות</th><th>מסמך</th>' +
+      '<th class="th-ltr">אסמכתא</th><th>הערה</th><th>קטגוריה</th>' +
+      '<th class="th-num">זכות</th><th class="th-num">חובה</th><th class="th-num">יתרה</th>';
+  }
+
   const bankAccounts = [...new Set(transactions.filter(t => !CC_SOURCE_TYPES.has(t.source_type)).map(t => t.account))];
   const ccAccounts   = [...new Set(transactions.filter(t =>  CC_SOURCE_TYPES.has(t.source_type)).map(t => t.account))];
 
