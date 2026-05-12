@@ -1146,9 +1146,15 @@ function bankForTx(t) {
   if (!CC_SOURCE_TYPES.has(t.source_type)) {
     return SOURCE_TO_BANK[t.source_type] || '';
   }
-  // Resolve 4-digit card identifier: prefer stored card_digits, fall back to
-  // extracting from account field ("ישראכרט *8790" → "8790")
-  const digits = t.card_digits || (t.account || '').match(/\*(\d{4})/)?.[1] || null;
+  // Resolve 4-digit card identifier: prefer stored card_digits, then extract
+  // from account field. Try *NNNN pattern first, then any \bNNNN\b in the
+  // string (handles filename-based accounts like "ישראלי 8790 - פירוט נ.xlsx").
+  const digits = t.card_digits
+    || (t.account || '').match(/\*(\d{4})/)?.[1]
+    || (() => {
+        const allFour = [...(t.account || '').matchAll(/\b(\d{4})\b/g)].map(m => m[1]);
+        return allFour.find(d => (profile?.creditCards || []).some(c => c.digits === d)) || null;
+      })();
 
   // 1. Try by card digits → profile card → linked_account (already a bank name)
   if (digits) {
