@@ -1616,6 +1616,7 @@ async function renameAccount(from, to) {
       body: JSON.stringify({ from, to })
     });
     const data = await res.json();
+    if (data.error) { alert('שגיאה בשינוי שם: ' + data.error); return; }
     if (data.ok) {
       transactions = await fetch('/api/transactions').then(r => r.json());
       renderDashboard();

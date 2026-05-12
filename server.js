@@ -368,15 +368,31 @@ app.put('/api/accounts/rename', (req, res) => {
   const { from, to } = req.body;
   if (!from || !to || from === to) return res.status(400).json({ error: 'invalid' });
 
-  db.transaction(() => {
-    // Update all existing transactions
+  try { db.transaction(() => {
+    // When merging into an existing account, duplicate rows (same date+description+amount)
+    // must be removed first to avoid unique-index violations.
+    db.prepare(`
+      DELETE FROM transactions
+      WHERE account = ?
+        AND rowid IN (
+          SELECT t1.rowid FROM transactions t1
+          WHERE t1.account = ?
+            AND EXISTS (
+              SELECT 1 FROM transactions t2
+              WHERE t2.account = ?
+                AND t2.date        = t1.date
+                AND t2.description = t1.description
+                AND t2.amount      = t1.amount
+            )
+        )
+    `).run(from, from, to);
+
     db.prepare('UPDATE transactions SET account = ? WHERE account = ?').run(to, from);
-    // Store mapping: the original "from" value → new alias
-    // Also remap any existing alias that pointed to "from"
     upsertAlias.run(from, to, new Date().toISOString());
-    // If "from" itself was already an alias target of something else, update that too
     db.prepare(`UPDATE account_aliases SET alias = ? WHERE alias = ?`).run(to, from);
-  })();
+  })(); } catch (e) {
+    return res.status(500).json({ error: e.message });
+  }
 
   res.json({ ok: true });
 });
