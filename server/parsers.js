@@ -126,7 +126,6 @@ function extractLeumiAccountId(html) {
 }
 
 function extractIsracardId(rows) {
-  // Header rows contain: "4 ספרות אחרונות של הכרטיס: 1234" or card number
   for (let i = 0; i < Math.min(rows.length, 12); i++) {
     const line = rows[i].map(c => str(c)).join(' ');
     let m = line.match(/\*+(\d{4})/);
@@ -134,7 +133,10 @@ function extractIsracardId(rows) {
     m = line.match(/ספרות אחרונות[:\s]*(\d{4})/);
     if (m) return `ישראכרט *${m[1]}`;
     m = line.match(/כרטיס[:\s]+(\d{8,19})/);
-    if (m) return `ישראכרט ${m[1].slice(-4).padStart(m[1].length, '*')}`;
+    if (m) return `ישראכרט *${m[1].slice(-4)}`;
+    // "לכרטיס מאסטרקארד 8790" — bare 4-digit card suffix
+    m = line.match(/מאסטרקארד\s+(\d{4})\b/);
+    if (m) return `ישראכרט *${m[1]}`;
   }
   return null;
 }
