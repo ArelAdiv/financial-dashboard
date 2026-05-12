@@ -953,6 +953,22 @@ function parsePoalimDailyBalances(rows, accountName, sourceFile) {
 
   let report_date = null;
 
+  // Scan top rows for a "נכון ליום" date before section headers
+  // The date cell may be an Excel serial number (raw number, not string), so use raw rows
+  const topEnd = Math.min(checkingIdx >= 0 ? checkingIdx + 5 : 20, rows.length);
+  outer: for (let i = 0; i < topEnd; i++) {
+    const raw = rows[i];
+    for (let j = 0; j < raw.length; j++) {
+      if (str(raw[j]).includes('נכון')) {
+        // Try the next cell (date value right after the label)
+        for (let k = j + 1; k <= j + 3 && k < raw.length; k++) {
+          const d = normalizeDate(raw[k]);
+          if (d) { report_date = d; break outer; }
+        }
+      }
+    }
+  }
+
   // Skip metadata and column-header rows
   const isMetaRow = (cells) => {
     const line = cells.join(' ');
