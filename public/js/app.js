@@ -1146,9 +1146,13 @@ function bankForTx(t) {
   if (!CC_SOURCE_TYPES.has(t.source_type)) {
     return SOURCE_TO_BANK[t.source_type] || '';
   }
-  // 1. Try by card_digits → profile card → linked_account (already a bank name)
-  if (t.card_digits) {
-    const card = (profile?.creditCards || []).find(c => c.digits === t.card_digits);
+  // Resolve 4-digit card identifier: prefer stored card_digits, fall back to
+  // extracting from account field ("ישראכרט *8790" → "8790")
+  const digits = t.card_digits || (t.account || '').match(/\*(\d{4})/)?.[1] || null;
+
+  // 1. Try by card digits → profile card → linked_account (already a bank name)
+  if (digits) {
+    const card = (profile?.creditCards || []).find(c => c.digits === digits);
     if (card?.linked_account) return card.linked_account;
   }
   // 2. Fallback: match CC account digits against bank account digits
