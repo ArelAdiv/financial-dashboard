@@ -781,7 +781,8 @@ function parseLeumiBalances(filePath, accountName, sourceFile) {
 
 // ── Isracard ──────────────────────────────────────────────────────────────────
 function parseIsracard(rows, accountName, sourceFile) {
-  const account = resolveAccount(extractIsracardId(rows), accountName, sourceFile);
+  const account   = resolveAccount(extractIsracardId(rows), accountName, sourceFile);
+  const cardDigits = (account.match(/\*(\d{4})/) || [])[1] || null;
   const hi = findHeader(rows, ['תאריך', 'בית עסק'], 15);
   if (hi < 0) {
     console.log('[isracard] header not found, falling back to generic');
@@ -815,9 +816,10 @@ function parseIsracard(rows, accountName, sourceFile) {
       amount:    -Math.abs(amountRaw),
       balance:   null,
       category:  null,
-      reference: dc.ref >= 0 ? str(row[dc.ref]) || null : null,
-      notes:     dc.notes >= 0 ? str(row[dc.notes]) || null : null,
-      account:   account, source: sourceFile, source_type: 'isracard_cc'
+      reference:   dc.ref >= 0 ? str(row[dc.ref]) || null : null,
+      notes:       dc.notes >= 0 ? str(row[dc.notes]) || null : null,
+      card_digits: cardDigits,
+      account:     account, source: sourceFile, source_type: 'isracard_cc'
     });
   }
 
@@ -827,7 +829,8 @@ function parseIsracard(rows, accountName, sourceFile) {
 
 // ── Max ───────────────────────────────────────────────────────────────────────
 function parseMax(rows, accountName, sourceFile) {
-  const account = resolveAccount(extractMaxId(rows), accountName, sourceFile);
+  const account    = resolveAccount(extractMaxId(rows), accountName, sourceFile);
+  const cardDigits = (account.match(/\*(\d{4})/) || [])[1] || null;
   const hi = findHeader(rows, ['תאריך', 'סכום'], 15);
   if (hi < 0) {
     console.log('[max] header not found, falling back to generic');
@@ -866,10 +869,11 @@ function parseMax(rows, accountName, sourceFile) {
       date, description: str(row[dc.desc]),
       amount:    -Math.abs(amountRaw),
       balance:   null,
-      category:  dc.category >= 0 ? str(row[dc.category]) || null : null,
-      reference: null,
-      notes:     noteParts.join(' | ') || null,
-      account:   account, source: sourceFile, source_type: 'max_cc'
+      category:    dc.category >= 0 ? str(row[dc.category]) || null : null,
+      reference:   null,
+      notes:       noteParts.join(' | ') || null,
+      card_digits: cardDigits,
+      account:     account, source: sourceFile, source_type: 'max_cc'
     });
   }
 
