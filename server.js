@@ -193,7 +193,6 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
       const mergedAccounts = [...prevAccounts, ...(result.profileData.accounts || [])];
       existing.balance_snapshot = { ...result.profileData, accounts: mergedAccounts };
     } else {
-      result.profileData.updated_at = new Date().toISOString();
       existing[result.profileKey] = result.profileData;
     }
 

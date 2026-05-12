@@ -1240,11 +1240,11 @@ function buildStaleAccounts() {
     let liveBalance = null, liveDate = null;
     if (info.source_type === 'leumi_transactions' && profile.leumi_balances) {
       liveBalance = profile.leumi_balances.checking;
-      liveDate    = profile.leumi_balances.report_date || profile.leumi_balances.updated_at;
+      liveDate    = profile.leumi_balances.report_date;
     } else if (profile.live_balances &&
                (info.source_type === 'poalim_transactions' || !info.source_type)) {
       liveBalance = profile.live_balances.checking;
-      liveDate    = profile.live_balances.report_date || profile.live_balances.updated_at;
+      liveDate    = profile.live_balances.report_date;
     }
     if (liveBalance === null) continue;
 
