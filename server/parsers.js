@@ -171,16 +171,11 @@ function extractCalHeader(rows) {
   return { digits, linked_account, account_id: digits ? `כאל *${digits}` : null };
 }
 
-// Resolves the final account label:
-// - Detected account ID takes priority as the unique identifier
-// - User-provided name is appended in parentheses for readability
-// - Falls back to user-provided name, then sourceFile
+// Resolves the final account label.
+// Detected account ID always takes priority so multiple files for the same
+// account automatically group together regardless of filename or user input.
 function resolveAccount(detected, userProvided, sourceFile) {
-  if (detected) {
-    return userProvided && userProvided !== sourceFile
-      ? `${userProvided} (${detected})`
-      : detected;
-  }
+  if (detected) return detected;
   return userProvided || sourceFile;
 }
 
