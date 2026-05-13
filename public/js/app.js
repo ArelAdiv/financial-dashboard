@@ -1473,25 +1473,30 @@ function editCategoryCell(cell) {
       input.style.display = 'inline';
       input.focus();
     } else {
-      input.style.display = 'none';
+      cleanup();
       doSaveCat(cell, desc, select.value);
     }
   });
 
-  function commitOnBlur() {
-    setTimeout(() => {
-      if (!cell.contains(document.activeElement)) {
-        const cat = select.value === 'אחר' ? input.value.trim() : select.value;
-        doSaveCat(cell, desc, cat);
-      }
-    }, 150);
+  // Outside-click handler: commit when user clicks anywhere outside the cell.
+  // Added with setTimeout(0) so the current opening-click doesn't immediately
+  // trigger it. Blur listeners are intentionally NOT used — native <select>
+  // fires blur when its dropdown opens, which caused premature re-renders.
+  function cleanup() {
+    document.removeEventListener('mousedown', onOutsideClick);
   }
+  function onOutsideClick(e) {
+    if (!cell.contains(e.target)) {
+      cleanup();
+      const cat = select.value === 'אחר' ? input.value.trim() : select.value;
+      doSaveCat(cell, desc, cat);
+    }
+  }
+  setTimeout(() => document.addEventListener('mousedown', onOutsideClick), 0);
 
-  select.addEventListener('blur', commitOnBlur);
-  input.addEventListener('blur', commitOnBlur);
   input.addEventListener('keydown', e => {
-    if (e.key === 'Enter')  doSaveCat(cell, desc, input.value.trim());
-    if (e.key === 'Escape') doSaveCat(cell, desc, curCat);
+    if (e.key === 'Enter')  { cleanup(); doSaveCat(cell, desc, input.value.trim()); }
+    if (e.key === 'Escape') { cleanup(); doSaveCat(cell, desc, curCat); }
   });
 }
 
