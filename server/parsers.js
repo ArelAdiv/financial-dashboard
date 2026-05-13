@@ -885,10 +885,12 @@ function parseMax(filePath, accountName, sourceFile) {
   let found = 0, skipped = 0;
 
   for (const sheetName of wb.SheetNames) {
-    if (!TARGET_SHEETS.some(t => sheetName.includes(t) || t.includes(sheetName))) continue;
+    const normalized = sheetName.replace(/\s+/g, ' ').trim();
+    const isTarget = TARGET_SHEETS.some(t => normalized.includes(t) || t.includes(normalized));
+    if (!isTarget && !normalized.includes('עסקאות')) continue;
 
-    const isImmediateDebit = sheetName.includes('חיוב מיידי');
-    const isPending        = sheetName.includes('טרם נקלטו');
+    const isImmediateDebit = normalized.includes('חיוב מיידי');
+    const isPending        = normalized.includes('טרם נקלטו') || normalized.includes('שאושרו');
     const rows = xlsx.utils.sheet_to_json(
       wb.Sheets[sheetName], { header: 1, defval: '', raw: false });
 
@@ -911,8 +913,10 @@ function parseMax(filePath, accountName, sourceFile) {
       const date = normalizeDate(str(row[0]));  // col A
       if (!date)  { skipped++; continue; }
 
-      const amountRaw = parseNum(row[5]);         // col F – סכום חיוב
-      if (amountRaw === null) { skipped++; continue; }
+      // col F = סכום חיוב (known after billing); col H = סכום עסקה מקורי (always present).
+      // Pending transactions have col F empty — fall back to col H.
+      const amountRaw = parseNum(row[5]) ?? parseNum(row[7]);
+      if (amountRaw === null || amountRaw === 0) { skipped++; continue; }
 
       // col D: per-row card digits (may be blank → fall back to sheet-level)
       const rowDigits  = str(row[3]) || sheetDigits || null;
