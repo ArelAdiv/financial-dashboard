@@ -44,6 +44,15 @@ db.exec(`
   try { db.exec(`ALTER TABLE transactions ADD COLUMN ${col}`); } catch {}
 });
 
+// Back-fill status='pending' for existing Cal/Isracard rows where the category
+// indicates an in-progress charge (e.g. "עסקה בקליטה").
+try {
+  db.exec(`UPDATE transactions SET status='pending'
+           WHERE status IS NULL
+             AND source_type IN ('cal_cc','isracard_cc','max_cc')
+             AND category LIKE '%בקליטה%'`);
+} catch {}
+
 // Primary dedup: by (date, description, amount, account) — catches rows without a reference
 try {
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_tx_dedup ON transactions(date, description, amount, account)');
