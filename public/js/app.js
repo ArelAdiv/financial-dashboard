@@ -1149,10 +1149,12 @@ function isPaymentTypeCat(cat) {
 }
 
 // A CC transaction is pending when explicitly marked, OR when Cal/Isracard stored
-// "בקליטה" in the category field (old imports before the status column existed).
+// "בקליטה" in the category or notes field (old imports before the status column).
 function isPendingTx(t) {
   if (t.status === 'pending') return true;
-  if (CC_SOURCE_TYPES.has(t.source_type) && (t.category || '').includes('בקליטה')) return true;
+  if (!CC_SOURCE_TYPES.has(t.source_type)) return false;
+  if ((t.category || '').includes('בקליטה')) return true;
+  if ((t.notes    || '').includes('בקליטה')) return true;
   return false;
 }
 
@@ -1374,8 +1376,12 @@ function filterTransactions() {
     }
 
     // Description: merchant + optional CC notes (installments, foreign currency)
-    const descExtra = isCCTx && t.notes
-      ? `<div class="tx-notes">${t.notes}</div>`
+    // Strip "עסקה בקליטה" from notes when shown via the ⏳ badge already
+    const cleanNotes = isPending
+      ? (t.notes || '').replace(/עסקה בקליטה[:\s]*/g, '').trim() || null
+      : t.notes;
+    const descExtra = isCCTx && cleanNotes
+      ? `<div class="tx-notes">${cleanNotes}</div>`
       : '';
 
     const bankName = bankForTx(t);
