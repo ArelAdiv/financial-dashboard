@@ -1184,6 +1184,9 @@ function paymentType(t) {
   const m = notes.match(/(\d+)\s*(?:מתוך|מ['`״]?\s*|\/)\s*(\d+)/);
   if (m) return `${m[1]} מ-${m[2]}`;
 
+  // Immediate debit (Max "עסקאות בחיוב מיידי" sheet)
+  if (notes.includes('חיוב מיידי')) return 'חיוב מיידי';
+
   // Standing order
   if (cat.includes('הוראת קבע') || notes.includes('הוראת קבע') || desc.includes('הוראת קבע'))
     return 'הוראת קבע';
