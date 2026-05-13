@@ -313,6 +313,11 @@ body {
 }
 .billing-normal { background: var(--blue-bg); color: var(--blue); }
 .billing-warn   { background: var(--orange-bg); color: var(--orange); }
+.pending-badge  { background: #fff7ed; color: #b45309; border: 1px solid #fbbf24; }
+
+/* Pending (approved-not-yet-captured) transaction rows */
+.tx-pending-row td { background: #fffbeb; }
+.cc-pending-line { color: #b45309; }
 
 /* Synthetic billing rows */
 .cc-billing-row td { background: #f0f4ff; }

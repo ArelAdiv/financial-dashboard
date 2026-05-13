@@ -681,6 +681,7 @@ function buildCCBillingRows(bankAccount) {
 
   for (const t of transactions) {
     if (!ccTypes.has(t.source_type) || !t.billing_date || !digitMap[t.card_digits]) continue;
+    if (t.status === 'pending') continue; // pending = not yet billed to bank
     const card      = digitMap[t.card_digits];
     const actualDay = parseInt(t.billing_date.substring(8, 10));
     const isA       = card.day && actualDay === card.day;
@@ -710,10 +711,14 @@ function renderCCSection() {
   const cards = profile?.creditCards || [];
   if (!cards.length) { el.innerHTML = '<div class="empty-state">לא הוגדרו נתונים</div>'; return; }
   el.innerHTML = cards.map((c, i) => {
-    const color  = getCCColor(c.company + (c.digits || ''));
-    const digits = c.digits ? `•••• ${c.digits}` : '';
-    const linked = c.linked_account ? `<div class="account-detail">מקושר: ${c.linked_account}</div>` : '';
-    const limit  = c.credit_limit   ? `<div class="account-detail">מסגרת: ${fmt(c.credit_limit)}</div>` : '';
+    const color      = getCCColor(c.company + (c.digits || ''));
+    const digits     = c.digits ? `•••• ${c.digits}` : '';
+    const linked     = c.linked_account ? `<div class="account-detail">מקושר: ${c.linked_account}</div>` : '';
+    const limit      = c.credit_limit   ? `<div class="account-detail">מסגרת: ${fmt(c.credit_limit)}</div>` : '';
+    const pendData   = profile.cards_pending?.[c.digits];
+    const pendLine   = pendData?.total_pending > 0
+      ? `<div class="account-detail cc-pending-line">בתהליך קליטה: <strong>${fmt(pendData.total_pending)}</strong> (${pendData.count})</div>`
+      : '';
     return `<div class="account-item" onclick="openCCModal(${i})" style="cursor:pointer" title="לחץ לעריכה">
       <div class="account-icon">💳</div>
       <div class="account-info">
@@ -723,7 +728,7 @@ function renderCCSection() {
         </div>
         <div class="account-type">כרטיס אשראי${c.day ? ` · יום חיוב ${c.day}` : ''}</div>
         ${c.owner ? `<div class="account-detail">בעל: ${c.owner}</div>` : ''}
-        ${linked}${limit}
+        ${linked}${limit}${pendLine}
       </div>
       <div style="font-size:11px;color:#bbb;margin-right:4px">✏️</div>
     </div>`;
@@ -1341,9 +1346,13 @@ function filterTransactions() {
       accountDisplay = t.account && t.account !== srcFile ? t.account : '—';
     }
 
-    // הערה column: billing date for CC, notes for bank
+    const isPending = t.status === 'pending';
+
+    // הערה column: pending badge for pending CC, billing date for regular CC, notes for bank
     let noteCell = '';
-    if (isCCTx && t.billing_date) {
+    if (isPending) {
+      noteCell = `<span class="billing-badge pending-badge" title="עסקה שאושרה אך טרם נקלטה בחשבון">⏳ טרם נקלט</span>`;
+    } else if (isCCTx && t.billing_date) {
       const card      = (profile?.creditCards || []).find(c => c.digits === t.card_digits);
       const actualDay = parseInt(t.billing_date.substring(8, 10));
       const isStdDay  = card?.day && actualDay === card.day;
@@ -1367,8 +1376,16 @@ function filterTransactions() {
     const catDisplay = isPaymentTypeCat(t.category) ? '' : (t.category || '');
     const catStored  = isPaymentTypeCat(t.category) ? '' : (t.category || '');
 
-    const rowClass = isFirstStale ? ' class="tx-stale-row"' : isCCTx ? ' class="tx-cc-row"' : '';
-    const rowStyle = isCCTx ? ` style="border-right:3px solid ${getCCColor(t.account)}"` : '';
+    const ccColor  = getCCColor(t.account);
+    const rowClass = isFirstStale ? ' class="tx-stale-row"'
+                   : isPending    ? ' class="tx-cc-row tx-pending-row"'
+                   : isCCTx      ? ' class="tx-cc-row"'
+                   : '';
+    const rowStyle = isCCTx
+      ? ` style="border-right:3px solid ${isPending ? '#f59e0b' : ccColor}"`
+      : '';
+    // Pending amounts shown in muted orange instead of full red
+    const debitStyle = isPending ? ' style="color:#f59e0b;opacity:0.8"' : '';
 
     const row = `<tr${rowClass}${rowStyle}>
       <td class="tx-date">${fmtDate(t.date)}</td>
@@ -1382,7 +1399,7 @@ function filterTransactions() {
       <td class="tx-pmt">${pmtType}</td>
       <td class="tx-doc-sm">${isCCTx ? '' : srcFile}</td>
       <td class="tx-num tx-credit">${credit}</td>
-      <td class="tx-num tx-debit">${debit}</td>
+      <td class="tx-num tx-debit"${debitStyle}>${debit}</td>
       <td class="tx-num tx-bal">${isCCTx ? '' : bal}</td>
     </tr>`;
 
@@ -1543,9 +1560,10 @@ async function doUpload(file) {
         status.innerHTML = `<div class="upload-warning" style="white-space:pre-line">${data.warning}</div>`;
       } else {
         const skipped = data.stats?.skipped ?? (data.rows - data.inserted);
-        const skippedNote = skipped > 0 ? ` (${skipped} שורות דולגו)` : '';
+        const skippedNote   = skipped > 0       ? ` (${skipped} שורות דולגו)` : '';
+        const promotedNote  = data.promoted > 0 ? ` | עודכנו ${data.promoted} עסקאות מ״טרם נקלט״ ל״נקלט״` : '';
         const accountNote = data.detectedAccount ? `<br><span style="font-size:12px;opacity:.8">חשבון שזוהה: <strong>${data.detectedAccount}</strong></span>` : '';
-        let msg = `<div class="upload-success">✓ נטענו בהצלחה ${data.inserted} שורות חדשות מ-${data.filename}${skippedNote}${accountNote}</div>`;
+        let msg = `<div class="upload-success">✓ נטענו בהצלחה ${data.inserted} שורות חדשות מ-${data.filename}${skippedNote}${promotedNote}${accountNote}</div>`;
         if (data.warning) msg += `<div class="upload-warning" style="margin-top:8px">${data.warning}</div>`;
         status.innerHTML = msg;
       }

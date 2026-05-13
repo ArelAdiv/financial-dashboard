@@ -39,7 +39,8 @@ db.exec(`
 `);
 
 // Migrate: add columns that may be missing in older DB files
-['category TEXT', 'reference TEXT', 'notes TEXT', 'source_type TEXT', 'billing_date TEXT', 'card_digits TEXT'].forEach(col => {
+['category TEXT', 'reference TEXT', 'notes TEXT', 'source_type TEXT', 'billing_date TEXT',
+ 'card_digits TEXT', 'status TEXT', 'pending_key TEXT'].forEach(col => {
   try { db.exec(`ALTER TABLE transactions ADD COLUMN ${col}`); } catch {}
 });
 
@@ -134,25 +135,39 @@ function saveProfile(data) {
 // ── Insert helpers ────────────────────────────────────────────────────────────
 const insertTx = db.prepare(`
   INSERT OR IGNORE INTO transactions
-    (account, date, description, amount, balance, category, reference, notes, source_type, source_file, imported_at, billing_date, card_digits)
-  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+    (account, date, description, amount, balance, category, reference, notes, source_type, source_file, imported_at, billing_date, card_digits, status, pending_key)
+  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+`);
+
+// Promote a pending row to cleared when a matching cleared tx arrives
+const promotePending = db.prepare(`
+  UPDATE transactions SET status='cleared', billing_date=?, imported_at=?
+  WHERE pending_key=? AND status='pending' AND account=?
 `);
 
 const insertMany = db.transaction((rows) => {
-  let inserted = 0;
+  let inserted = 0, promoted = 0;
+  const now = new Date().toISOString();
   for (const r of rows) {
+    // Pending→cleared promotion: upgrade the existing pending row, skip insert
+    if (r.pending_key && r.status === 'cleared') {
+      const up = promotePending.run(r.billing_date ?? null, now, r.pending_key, r.account);
+      if (up.changes > 0) { promoted++; continue; }
+    }
     const info = insertTx.run(
       r.account, r.date, r.description, r.amount,
       r.balance ?? null, r.category ?? null, r.reference ?? null,
       r.notes ?? null, r.source_type ?? null,
       r.source ?? r.source_file ?? null,
-      new Date().toISOString(),
+      now,
       r.billing_date ?? null,
-      r.card_digits ?? null
+      r.card_digits ?? null,
+      r.status   ?? 'cleared',
+      r.pending_key ?? null
     );
     if (info.changes > 0) inserted++;
   }
-  return inserted;
+  return { inserted, promoted };
 });
 
 // ── API routes ────────────────────────────────────────────────────────────────
@@ -218,7 +233,28 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
   }
 
   // Transaction files → insert into SQLite
-  const inserted = insertMany(result.transactions);
+  const { inserted, promoted } = insertMany(result.transactions);
+
+  // After a Max CC upload: recalculate pending totals per card and persist to profile
+  if (result.sourceType === 'max_cc') {
+    const pendingRows = db.prepare(`
+      SELECT card_digits, COUNT(*) AS cnt, SUM(amount) AS total
+      FROM transactions
+      WHERE source_type='max_cc' AND status='pending' AND card_digits IS NOT NULL
+      GROUP BY card_digits
+    `).all();
+    const profileData = loadProfile() || {};
+    profileData.cards_pending = {};
+    for (const row of pendingRows) {
+      profileData.cards_pending[row.card_digits] = {
+        total_pending: -row.total,            // amounts stored negative; display positive
+        last_updated:  new Date().toISOString().substring(0, 10),
+        count:         row.cnt
+      };
+    }
+    profileData.updatedAt = new Date().toISOString();
+    saveProfile(profileData);
+  }
 
   // Auto-link CC card to profile when card digits are known
   if (result.sourceType === 'cal_cc') {
@@ -251,7 +287,8 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
     filename:        req.file.originalname,
     rows:            result.transactions.length,
     inserted,
-    duplicates:      result.transactions.length - inserted,
+    promoted,
+    duplicates:      result.transactions.length - inserted - promoted,
     sourceType:      result.sourceType,
     detectedAccount,
     stats:           result.stats || null,
