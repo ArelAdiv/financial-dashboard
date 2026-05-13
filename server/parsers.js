@@ -206,6 +206,9 @@ function detectFileType(filePath, rows) {
     if (line.includes('כל המשתמשים') ||
         (line.includes('קטגוריה') && rows.slice(0,5)
           .some(r => r.map(str).join(' ').includes('כרטיס')))) return 'max_cc';
+    // New Max CC format: row 4 header contains these two columns
+    if (line.includes('שם בית העסק') &&
+        (line.includes('סכום חיוב') || line.includes('4 ספרות'))) return 'max_cc';
     // Leumi CC and כאל CC — both use the same column structure
     if (line.includes('פירוט עסקאות') &&
         (line.includes('כרטיס') || line.includes('אשראי')))  return 'cal_cc';
@@ -829,58 +832,127 @@ function parseIsracard(rows, accountName, sourceFile) {
   return txResult(transactions, 'isracard_cc', { found, imported: transactions.length, skipped });
 }
 
-// ── Max ───────────────────────────────────────────────────────────────────────
-function parseMax(rows, accountName, sourceFile) {
-  const account    = resolveAccount(extractMaxId(rows), accountName, sourceFile);
-  const cardDigits = (account.match(/\*(\d{4})/) || [])[1] || null;
-  const hi = findHeader(rows, ['תאריך', 'סכום'], 15);
-  if (hi < 0) {
-    console.log('[max] header not found, falling back to generic');
-    return parseGeneric(rows, account, sourceFile);
+// ── Max CC (multi-sheet) ──────────────────────────────────────────────────────
+// Receives filePath directly so it can read multiple sheets.
+// Sheet structure:
+//   Row 2 cell A  → card name with 4-digit suffix, e.g. "9226-clal pay"
+//   Row 3 cell A  → date range "YYYY-MM-DD-YYYY-MM-DD"; end date = report date
+//   Row 4         → column headers
+//   Rows 5+       → transaction data
+// Parses all of: עסקאות במועד החיוב / עסקאות חו"ל ומט"ח / עסקאות בחיוב מיידי
+function parseMax(filePath, accountName, sourceFile) {
+  const wb = xlsx.readFile(filePath, { cellDates: false, raw: false });
+
+  const TARGET_SHEETS = [
+    'עסקאות במועד החיוב',
+    'עסקאות חו"ל ומט"ח',
+    'עסקאות בחיוב מיידי',
+  ];
+
+  // Extract card digits and report date from the first sheet's metadata rows
+  const firstRows = xlsx.utils.sheet_to_json(
+    wb.Sheets[wb.SheetNames[0]], { header: 1, defval: '', raw: false });
+
+  let globalDigits = null;
+  let reportDate   = null;
+
+  if (firstRows.length > 1) {
+    const r2 = str(firstRows[1][0]); // "9226-clal pay" or "****9226"
+    const m  = r2.match(/^(\d{4})[-\s]/) || r2.match(/\*+(\d{4})/);
+    if (m) globalDigits = m[1];
   }
 
-  const hdrs = rows[hi].map(c => str(c));
-  const dc = {
-    date:     colIdx(hdrs, ['תאריך עסקה', 'תאריך'], 0),
-    desc:     colIdx(hdrs, ['שם בית עסק', 'בית עסק', 'תיאור'], 1),
-    category: colIdx(hdrs, ['קטגוריה'], 2),
-    amount:   colIdx(hdrs, ['סכום חיוב', 'סכום'], 5),
-    notes1:   colIdx(hdrs, ['פרטים', 'הערות'], -1),
-    notes2:   colIdx(hdrs, ['מטבע עסקה'], -1)
-  };
-  console.log(`[max] headerIdx=${hi} cols:`, dc);
+  if (firstRows.length > 2) {
+    const r3    = str(firstRows[2][0]); // "2025-05-01-2026-05-13"
+    const dates = [...r3.matchAll(/\d{4}-\d{2}-\d{2}/g)].map(m => m[0]);
+    if (dates.length >= 2) reportDate = dates[dates.length - 1];
+    else if (dates.length === 1) reportDate = dates[0];
+  }
 
+  const account = resolveAccount(
+    globalDigits ? `מקס *${globalDigits}` : extractMaxId(firstRows),
+    accountName, sourceFile);
+
+  const allTransactions = [];
   let found = 0, skipped = 0;
-  const transactions = [];
 
-  for (const row of rows.slice(hi + 1)) {
-    found++;
-    if (isSummaryRow(row)) { skipped++; continue; }
-    const date = normalizeDate(row[dc.date]);
-    if (!date) { skipped++; continue; }
+  for (const sheetName of wb.SheetNames) {
+    if (!TARGET_SHEETS.some(t => sheetName.includes(t) || t.includes(sheetName))) continue;
 
-    const amountRaw = parseNum(row[dc.amount]);
-    if (amountRaw === null || amountRaw === 0) { skipped++; continue; }
+    const isImmediateDebit = sheetName.includes('חיוב מיידי');
+    const rows = xlsx.utils.sheet_to_json(
+      wb.Sheets[sheetName], { header: 1, defval: '', raw: false });
 
-    const noteParts = [
-      dc.notes1 >= 0 ? str(row[dc.notes1]) : '',
-      dc.notes2 >= 0 ? str(row[dc.notes2]) : ''
-    ].filter(Boolean);
+    // Per-sheet card digits (sheet row 2 may have a different card)
+    let sheetDigits = globalDigits;
+    if (rows.length > 1) {
+      const r2 = str(rows[1][0]);
+      const m  = r2.match(/^(\d{4})[-\s]/) || r2.match(/\*+(\d{4})/);
+      if (m) sheetDigits = m[1];
+    }
 
-    transactions.push({
-      date, description: str(row[dc.desc]),
-      amount:    -Math.abs(amountRaw),
-      balance:   null,
-      category:    dc.category >= 0 ? str(row[dc.category]) || null : null,
-      reference:   null,
-      notes:       noteParts.join(' | ') || null,
-      card_digits: cardDigits,
-      account:     account, source: sourceFile, source_type: 'max_cc'
-    });
+    // Header expected at row 4 (index 3)
+    const hi = findHeader(rows, ['שם בית העסק'], 8);
+    if (hi < 0) continue;
+
+    for (const row of rows.slice(hi + 1)) {
+      found++;
+      if (isSummaryRow(row)) { skipped++; continue; }
+
+      const date = normalizeDate(str(row[0]));  // col A
+      if (!date)  { skipped++; continue; }
+
+      const amountRaw = parseNum(row[5]);         // col F – סכום חיוב
+      if (amountRaw === null) { skipped++; continue; }
+
+      // col D: per-row card digits (may be blank → fall back to sheet-level)
+      const rowDigits  = str(row[3]) || sheetDigits || null;
+
+      // col E: transaction type
+      const txType     = str(row[4]);
+
+      // col G/H/I: currency info (for foreign transactions)
+      const origAmount   = parseNum(row[7]);
+      const origCurrency = str(row[8]);
+
+      // col J: billing date
+      const billingDate = normalizeDate(str(row[9])) || null;
+
+      // col K: notes from file ("תשלום 1 מתוך 2", etc.)
+      const rawNotes = str(row[10]);
+
+      // Build notes field
+      const noteParts = [];
+      if (rawNotes) noteParts.push(rawNotes);
+      // Foreign currency: append readable original amount
+      if (origAmount !== null && origCurrency &&
+          origCurrency !== 'ש"ח' && origCurrency !== '₪')
+        noteParts.push(`סכום מקורי: ${origAmount} ${origCurrency}`);
+      // Tag so paymentType() can detect these in the frontend
+      if (isImmediateDebit) noteParts.push('חיוב מיידי');
+      if (txType === 'הוראת קבע') noteParts.push('הוראת קבע');
+
+      allTransactions.push({
+        date,
+        description: str(row[1]),              // col B
+        amount:      -Math.abs(amountRaw),
+        balance:     null,
+        category:    str(row[2]) || null,      // col C – real consumer category
+        reference:   null,
+        notes:       noteParts.join(' | ') || null,
+        billing_date: billingDate,
+        card_digits:  rowDigits,
+        account,
+        source:      sourceFile,
+        source_type: 'max_cc',
+      });
+    }
   }
 
-  console.log(`[max_cc] found=${found} imported=${transactions.length} skipped=${skipped}`);
-  return txResult(transactions, 'max_cc', { found, imported: transactions.length, skipped });
+  console.log(`[max_cc] sheets parsed, found=${found} imported=${allTransactions.length} skipped=${skipped} reportDate=${reportDate}`);
+  const result = txResult(allTransactions, 'max_cc', { found, imported: allTransactions.length, skipped });
+  if (reportDate) result.stats.reportDate = reportDate;
+  return result;
 }
 
 // ── Cal ───────────────────────────────────────────────────────────────────────
@@ -1164,7 +1236,7 @@ async function parseFile(filePath, accountName) {
       case 'poalim_balances':       return parsePoalimBalances(rows, accountName, sourceFile);
       case 'poalim_mortgage':       return parsePoalimMortgage(rows, accountName, sourceFile);
       case 'isracard_cc':         return parseIsracard(rows, accountName, sourceFile);
-      case 'max_cc':              return parseMax(rows, accountName, sourceFile);
+      case 'max_cc':              return parseMax(filePath, accountName, sourceFile);
       case 'cal_cc':              return parseCal(rows, accountName, sourceFile);
       default:                    return parseGeneric(rows, accountName, sourceFile);
     }
