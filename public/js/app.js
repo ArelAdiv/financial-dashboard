@@ -681,7 +681,7 @@ function buildCCBillingRows(bankAccount) {
 
   for (const t of transactions) {
     if (!ccTypes.has(t.source_type) || !t.billing_date || !digitMap[t.card_digits]) continue;
-    if (t.status === 'pending') continue; // pending = not yet billed to bank
+    if (isPendingTx(t)) continue; // pending = not yet billed to bank
     const card      = digitMap[t.card_digits];
     const actualDay = parseInt(t.billing_date.substring(8, 10));
     const isA       = card.day && actualDay === card.day;
@@ -1140,11 +1140,20 @@ const TX_CATEGORIES = ['משכורת','מזון','תחבורה','תקשורת','
 // Values that Cal stores in the category column that represent payment type, not consumer category
 const PAYMENT_TYPE_CATS = new Set([
   'עסקה רגילה','עסקה רגיל','רגילה','רגיל','הוראת קבע',
-  'תשלומים','עסקאות בתשלומים','קניות בתשלומים','עסקה בתשלומים'
+  'תשלומים','עסקאות בתשלומים','קניות בתשלומים','עסקה בתשלומים',
+  'עסקה בקליטה',   // pending charge — shown via ⏳ badge, not as category text
 ]);
 function isPaymentTypeCat(cat) {
   if (!cat) return false;
   return PAYMENT_TYPE_CATS.has(cat) || cat.startsWith('עסקה') || cat.includes('תשלומים');
+}
+
+// A CC transaction is pending when explicitly marked, OR when Cal/Isracard stored
+// "בקליטה" in the category field (old imports before the status column existed).
+function isPendingTx(t) {
+  if (t.status === 'pending') return true;
+  if (CC_SOURCE_TYPES.has(t.source_type) && (t.category || '').includes('בקליטה')) return true;
+  return false;
 }
 
 function bankForTx(t) {
@@ -1346,7 +1355,7 @@ function filterTransactions() {
       accountDisplay = t.account && t.account !== srcFile ? t.account : '—';
     }
 
-    const isPending = t.status === 'pending';
+    const isPending = isPendingTx(t);
 
     // הערה column: pending badge for pending CC, billing date for regular CC, notes for bank
     let noteCell = '';

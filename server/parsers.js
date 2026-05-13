@@ -1013,17 +1013,21 @@ function parseCal(rows, accountName, sourceFile) {
     const txType      = dc.tx_type >= 0 ? str(row[dc.tx_type]) || null : null;
     const notes       = dc.notes  >= 0 ? str(row[dc.notes])   || null : null;
     const desc        = str(row[dc.desc]) || '';
+    const txAmount    = -Math.abs(amountRaw);
+    const isPending   = !!(txType && txType.includes('בקליטה'));
 
     transactions.push({
       date, description: desc,
-      amount:         -Math.abs(amountRaw),
+      amount:         txAmount,
       balance:        null,
       category:       txType,
       reference:      null,
       notes,
       billing_date:   billingDate,
       card_digits:    digits,
-      linked_account,            // used by server.js for profile auto-link only
+      linked_account,
+      status:      isPending ? 'pending' : 'cleared',
+      pending_key: isPending ? makePendingKey(desc, txAmount, date) : null,
       account, source: sourceFile, source_type: 'cal_cc'
     });
   }
