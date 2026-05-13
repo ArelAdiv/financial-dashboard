@@ -1,8 +1,15 @@
 'use strict';
 
-const fs   = require('fs');
-const path = require('path');
-const xlsx = require('xlsx');
+const fs     = require('fs');
+const path   = require('path');
+const xlsx   = require('xlsx');
+const crypto = require('crypto');
+
+function makePendingKey(description, amount, date) {
+  return crypto.createHash('md5')
+    .update(`${description || ''}|${amount}|${date || ''}`)
+    .digest('hex');
+}
 
 // ── Utilities ─────────────────────────────────────────────────────────────────
 
@@ -847,6 +854,7 @@ function parseMax(filePath, accountName, sourceFile) {
     'עסקאות במועד החיוב',
     'עסקאות חו"ל ומט"ח',
     'עסקאות בחיוב מיידי',
+    'עסקאות שאושרו וטרם נקלטו',
   ];
 
   // Extract card digits and report date from the first sheet's metadata rows
@@ -880,6 +888,7 @@ function parseMax(filePath, accountName, sourceFile) {
     if (!TARGET_SHEETS.some(t => sheetName.includes(t) || t.includes(sheetName))) continue;
 
     const isImmediateDebit = sheetName.includes('חיוב מיידי');
+    const isPending        = sheetName.includes('טרם נקלטו');
     const rows = xlsx.utils.sheet_to_json(
       wb.Sheets[sheetName], { header: 1, defval: '', raw: false });
 
@@ -932,19 +941,26 @@ function parseMax(filePath, accountName, sourceFile) {
       if (isImmediateDebit) noteParts.push('חיוב מיידי');
       if (txType === 'הוראת קבע') noteParts.push('הוראת קבע');
 
+      const description  = str(row[1]);
+      const txAmount     = -Math.abs(amountRaw);
+      const txStatus     = isPending ? 'pending' : 'cleared';
+      const txPendingKey = makePendingKey(description, txAmount, date);
+
       allTransactions.push({
         date,
-        description: str(row[1]),              // col B
-        amount:      -Math.abs(amountRaw),
-        balance:     null,
-        category:    str(row[2]) || null,      // col C – real consumer category
-        reference:   null,
-        notes:       noteParts.join(' | ') || null,
+        description,
+        amount:       txAmount,
+        balance:      null,
+        category:     str(row[2]) || null,      // col C – real consumer category
+        reference:    null,
+        notes:        noteParts.join(' | ') || null,
         billing_date: billingDate,
         card_digits:  rowDigits,
+        status:       txStatus,
+        pending_key:  txPendingKey,
         account,
-        source:      sourceFile,
-        source_type: 'max_cc',
+        source:       sourceFile,
+        source_type:  'max_cc',
       });
     }
   }
