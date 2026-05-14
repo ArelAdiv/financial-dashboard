@@ -522,6 +522,14 @@ function fmt(n) {
   return '₪ ' + Math.round(n).toLocaleString('he-IL');
 }
 
+function fmtAmt(n) {
+  if (n === undefined || n === null || isNaN(n)) return '';
+  const abs = Math.abs(Number(n));
+  const cents = Math.round(abs * 100) % 100;
+  const whole = Math.floor(abs);
+  return whole.toLocaleString('he-IL') + (cents ? '.' + String(cents).padStart(2, '0') : '');
+}
+
 function fmtExact(n) {
   if (n === undefined || n === null || isNaN(n)) return '—';
   const fixed = Number(n).toFixed(2);
@@ -1471,8 +1479,8 @@ function filterTransactions() {
     // ── Synthetic CC billing row ───────────────────────────────────────────────
     if (t.source_type === 'cc_billing') {
       const color  = getCCColor(t.card_digits ? `כאל *${t.card_digits}` : t.account);
-      const debit  = t.amount < 0 ? Math.round(-t.amount).toLocaleString('he-IL') : '';
-      const credit = t.amount > 0 ? Math.round( t.amount).toLocaleString('he-IL') : '';
+      const debit  = t.amount < 0 ? fmtAmt(-t.amount) : '';
+      const credit = t.amount > 0 ? fmtAmt( t.amount) : '';
       return `<tr class="cc-billing-row" style="border-right:3px solid ${color}">
         <td class="tx-date">${fmtDate(t.date)}</td>
         <td><span class="cc-billing-label">${t.description}</span></td>
@@ -1493,9 +1501,9 @@ function filterTransactions() {
     const isFirstStale = !isCCTx && staleAccounts[t.account] && !seenStale.has(t.account);
     if (!isCCTx && staleAccounts[t.account]) seenStale.add(t.account);
 
-    const credit  = t.amount > 0  ? Math.round(t.amount).toLocaleString('he-IL')  : '';
-    const debit   = t.amount < 0  ? Math.round(-t.amount).toLocaleString('he-IL') : '';
-    const bal     = t.balance != null ? Math.round(t.balance).toLocaleString('he-IL') : '—';
+    const credit  = t.amount > 0  ? fmtAmt( t.amount)  : '';
+    const debit   = t.amount < 0  ? fmtAmt(-t.amount) : '';
+    const bal     = t.balance != null ? fmtAmt(t.balance) : '—';
     const srcFile = (t.source_file || t.source || '').replace(/^\d+_/, '');
 
     // Account display: for CC show card badge; for bank show account name

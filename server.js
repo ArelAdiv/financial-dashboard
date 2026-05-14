@@ -53,9 +53,21 @@ try {
              AND (category LIKE '%בקליטה%' OR notes LIKE '%בקליטה%')`);
 } catch {}
 
-// Primary dedup: by (date, description, amount, account) — catches rows without a reference
+// Primary dedup: by (date, description, amount, account) — bank transactions (no billing_date)
+// Rebuilt as partial index so CC installments with same tx-date but different billing months
+// are not blocked. Drop old non-partial index first if it exists.
+try { db.exec('DROP INDEX IF EXISTS idx_tx_dedup'); } catch {}
 try {
-  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_tx_dedup ON transactions(date, description, amount, account)');
+  db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_tx_dedup
+           ON transactions(date, description, amount, account)
+           WHERE billing_date IS NULL`);
+} catch {}
+
+// CC installment dedup: billing_date distinguishes each installment of the same purchase
+try {
+  db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_tx_dedup_cc
+           ON transactions(date, description, amount, account, billing_date)
+           WHERE billing_date IS NOT NULL`);
 } catch {}
 
 // Secondary dedup: (date, amount, account, reference) when reference present.
@@ -221,6 +233,7 @@ function recalcReconciliation(profileData) {
     const lastBilling = `${lastY}-${pad(lastM)}-${pad(billingDay)}`;
 
     // Sum CC transactions for a given billing month.
+    // Excludes "חיוב מיידי" (immediate bank debits handled separately, not via monthly billing).
     // Uses billing_date when available; falls back to transaction date for older imports.
     const calcExpected = (y, m) => {
       const lastDay = new Date(y, m, 0).getDate();
@@ -229,6 +242,7 @@ function recalcReconciliation(profileData) {
       const row = db.prepare(`
         SELECT COALESCE(SUM(ABS(amount)),0) AS total FROM transactions
         WHERE card_digits=? AND (status='cleared' OR status='pending') AND amount < 0
+          AND (notes IS NULL OR notes NOT LIKE '%חיוב מיידי%')
           AND (
             (billing_date IS NOT NULL AND billing_date BETWEEN ? AND ?)
             OR (billing_date IS NULL AND date BETWEEN ? AND ?)
@@ -447,14 +461,15 @@ app.get('/api/reconciliation/:digits/history', (req, res) => {
   if (!card) return res.status(404).json({ error: 'card not found' });
 
   // Get all distinct billing months for this card.
+  // Excludes "חיוב מיידי" rows (not part of monthly CC billing).
   // Uses billing_date when set; falls back to transaction date for older imports.
   const billingMonths = db.prepare(`
     SELECT SUBSTR(COALESCE(billing_date, date), 1, 7) AS ym,
-           SUM(CASE WHEN billing_date IS NOT NULL THEN 1 ELSE 0 END) AS with_billing_date,
            COUNT(*) AS tx_count,
            COALESCE(SUM(CASE WHEN amount < 0 THEN ABS(amount) ELSE 0 END), 0) AS cc_total
     FROM transactions
     WHERE card_digits = ? AND (status = 'cleared' OR status = 'pending')
+      AND (notes IS NULL OR notes NOT LIKE '%חיוב מיידי%')
     GROUP BY ym
     ORDER BY ym DESC
   `).all(digits);
