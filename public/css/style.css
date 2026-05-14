@@ -313,7 +313,10 @@ body {
 }
 .billing-normal { background: var(--blue-bg); color: var(--blue); }
 .billing-warn   { background: var(--orange-bg); color: var(--orange); }
-.pending-badge  { background: #fff7ed; color: #b45309; border: 1px solid #fbbf24; }
+.pending-badge      { background: #fff7ed; color: #b45309; border: 1px solid #fbbf24; }
+.installment-badge  { display: inline-block; font-size: 11px; padding: 1px 6px; border-radius: 10px;
+                      background: var(--blue-bg); color: var(--blue); border: 1px solid #bfdbfe; }
+.discount-note      { font-size: 11px; color: var(--green); margin-top: 2px; }
 
 /* Pending (approved-not-yet-captured) transaction rows */
 .tx-pending-row td { background: #fffbeb; }

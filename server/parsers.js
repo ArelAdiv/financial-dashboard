@@ -202,6 +202,16 @@ function detectFileType(filePath, rows) {
     } catch { return 'leumi_transactions'; }
   }
 
+  // New Isracard format: row 2 col A = 'פירוט עסקאות', row 5 col A has card type + digits
+  if (rows.length > 4) {
+    const stripRTL = s => s.replace(/[‎‏‪-‮]/g, '');
+    const r2a = stripRTL(str(rows[1][0])).trim();
+    if (r2a === 'פירוט עסקאות') {
+      const r5line = rows[4].map(c => stripRTL(str(c))).join(' ');
+      if (r5line.match(/מסטרקארד|ויזה.*-\s*\d{4}|ישראכרט.*-\s*\d{4}/)) return 'isracard_cc';
+    }
+  }
+
   for (const row of rows.slice(0, 8)) {
     const line = row.map(c => str(c)).join(' ');
     if (line.includes('חשבונות שוטפים'))             return 'poalim_daily_balances';
@@ -793,49 +803,128 @@ function parseLeumiBalances(filePath, accountName, sourceFile) {
 
 // ── Isracard ──────────────────────────────────────────────────────────────────
 function parseIsracard(rows, accountName, sourceFile) {
-  const account   = resolveAccount(extractIsracardId(rows), accountName, sourceFile);
-  const cardDigits = (account.match(/\*(\d{4})/) || [])[1] || null;
-  const hi = findHeader(rows, ['תאריך', 'בית עסק'], 15);
-  if (hi < 0) {
-    console.log('[isracard] header not found, falling back to generic');
-    return parseGeneric(rows, accountName, sourceFile);
+  const stripRTL = s => String(s ?? '').replace(/[‎‏‪-‮]/g, '');
+
+  // ── Card digits from Row 5 (index 4) col A ───────────────────────────────
+  // e.g. '‫מסטרקארד‬ - 1580'  →  cardDigits = '1580'
+  let cardDigits = null;
+  if (rows.length > 4) {
+    const r5a = stripRTL(str(rows[4][0])).trim();
+    const m = r5a.match(/[-–]\s*(\d{4})\s*$/);
+    if (m) cardDigits = m[1];
+    if (!cardDigits) { const m2 = r5a.match(/(\d{4})\s*$/); if (m2) cardDigits = m2[1]; }
+  }
+  if (!cardDigits) {
+    const ex = extractIsracardId(rows);
+    if (ex) cardDigits = (ex.match(/\*(\d{4})/) || [])[1] || null;
+  }
+  const account = resolveAccount(
+    cardDigits ? `ישראכרט *${cardDigits}` : extractIsracardId(rows),
+    accountName, sourceFile);
+
+  // ── Report month/year from Row 2 (index 1) col C ─────────────────────────
+  // e.g. 'ינואר 2026'
+  const HEBREW_MONTHS = {
+    'ינואר':1,'פברואר':2,'מרץ':3,'מרס':3,'אפריל':4,
+    'מאי':5,'יוני':6,'יולי':7,'אוגוסט':8,
+    'ספטמבר':9,'אוקטובר':10,'נובמבר':11,'דצמבר':12
+  };
+  let reportMonth = null, reportYear = null;
+  if (rows.length > 1) {
+    const r2c = stripRTL(str(rows[1][2] || '')).trim();
+    const ym = r2c.match(/(\S+)\s+(\d{4})/);
+    if (ym) { reportMonth = HEBREW_MONTHS[ym[1]] || null; reportYear = parseInt(ym[2]); }
   }
 
-  const hdrs = rows[hi].map(c => str(c));
-  const dc = {
-    date:   colIdx(hdrs, ['תאריך עסקה', 'תאריך'], 0),
-    desc:   colIdx(hdrs, ['שם בית עסק', 'בית עסק', 'תיאור'], 1),
-    amount: colIdx(hdrs, ['סכום חיוב', 'סכום'], 4),
-    ref:    colIdx(hdrs, ['אסמכתא'], 6),
-    notes:  colIdx(hdrs, ['הערות', 'פרטים'], 7)
-  };
-  console.log(`[isracard] headerIdx=${hi} cols:`, dc);
+  // ── Billing date from Row 6 (index 5) col H ──────────────────────────────
+  // e.g. 'לחיוב ב-10.01'  →  day=10, month=1
+  let billingDay = null, billingMonth = null, billingYear = null;
+  if (rows.length > 5) {
+    const bCell = stripRTL(str(rows[5][7] || '')).trim();
+    const bm = bCell.match(/לחיוב\s+ב-(\d{1,2})\.(\d{2})/);
+    if (bm) { billingDay = parseInt(bm[1], 10); billingMonth = parseInt(bm[2], 10); }
+  }
+  if (billingDay && billingMonth && reportYear) {
+    billingYear = (reportMonth && billingMonth < reportMonth) ? reportYear + 1 : reportYear;
+  }
+  const billingDateStr = (billingDay && billingMonth && billingYear)
+    ? `${billingYear}-${String(billingMonth).padStart(2,'0')}-${String(billingDay).padStart(2,'0')}`
+    : null;
 
+  // ── Find data start row ───────────────────────────────────────────────────
+  // Expected: headers at row 10 (index 9), data from row 11 (index 10)
+  let dataStartIdx = 10;
+  if (rows.length > 9) {
+    const hdrs = rows[9].map(c => stripRTL(str(c)).trim());
+    const hasDate = hdrs.some(h => h.includes('תאריך'));
+    const hasDesc = hdrs.some(h => h.includes('בית עסק') || h.includes('שם בית'));
+    if (!hasDate || !hasDesc) {
+      const hi = findHeader(rows, ['תאריך', 'בית עסק'], 15);
+      if (hi < 0) {
+        console.log('[isracard] header not found, falling back to generic');
+        return parseGeneric(rows, accountName, sourceFile);
+      }
+      dataStartIdx = hi + 1;
+    }
+  }
+
+  // ── Parse transactions ────────────────────────────────────────────────────
   let found = 0, skipped = 0;
   const transactions = [];
 
-  for (const row of rows.slice(hi + 1)) {
+  for (let i = dataStartIdx; i < rows.length; i++) {
+    const row = rows[i];
     found++;
-    const date = normalizeDate(row[dc.date]);
-    if (!date) { skipped++; continue; }
-    if (isSummaryRow(row)) { skipped++; continue; }
 
-    const amountRaw = parseNum(row[dc.amount]);
+    const descRaw = stripRTL(str(row[1] || '')).trim();
+    // Stop at summary row
+    if (descRaw.includes('סה"כ לחיוב') || descRaw.includes('סה״כ לחיוב')) { skipped++; break; }
+    if (isSummaryRow(row)) { skipped++; break; }
+
+    const dateRaw = str(row[0] || '').trim();
+    if (!dateRaw) { skipped++; continue; }
+    const date = normalizeDate(dateRaw);
+    if (!date) { skipped++; continue; }
+
+    const description = descRaw || null;
+    if (!description) { skipped++; continue; }
+
+    // Col E (index 4): סכום חיוב — the billed amount
+    const amountRaw = parseNum(row[4]);
     if (amountRaw === null) { skipped++; continue; }
 
+    // Col C (index 2): סכום עסקה, Col D (index 3): מטבע עסקה
+    const origAmount   = parseNum(row[2]);
+    const origCurrency = stripRTL(str(row[3] || '')).replace('₪', '').trim();
+    const isForeign    = origCurrency && origCurrency !== '₪' && origCurrency !== 'ILS' && origCurrency !== '';
+
+    const reference = str(row[6] || '') || null;
+    let notes = stripRTL(str(row[7] || '')).replace(/\n/g, ' ').trim() || null;
+
+    // Append foreign currency info to notes
+    if (isForeign && origAmount !== null) {
+      const fx = `סכום מקורי: ${origAmount} ${origCurrency}`;
+      notes = notes ? `${notes} | ${fx}` : fx;
+    }
+
     transactions.push({
-      date, description: str(row[dc.desc]),
-      amount:    -Math.abs(amountRaw),
-      balance:   null,
-      category:  null,
-      reference:   dc.ref >= 0 ? str(row[dc.ref]) || null : null,
-      notes:       dc.notes >= 0 ? str(row[dc.notes]) || null : null,
-      card_digits: cardDigits,
-      account:     account, source: sourceFile, source_type: 'isracard_cc'
+      date, description,
+      amount:       -Math.abs(amountRaw),
+      balance:      null,
+      category:     null,
+      reference,
+      notes,
+      card_digits:  cardDigits,
+      billing_date: billingDateStr,
+      account,
+      source:       sourceFile,
+      source_type:  'isracard_cc',
+      status:       'cleared',
+      pending_key:  null,
     });
   }
 
-  console.log(`[isracard_cc] found=${found} imported=${transactions.length} skipped=${skipped}`);
+  console.log(`[isracard_cc] found=${found} imported=${transactions.length} skipped=${skipped} billingDate=${billingDateStr}`);
   return txResult(transactions, 'isracard_cc', { found, imported: transactions.length, skipped });
 }
 

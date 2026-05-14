@@ -1375,13 +1375,33 @@ function filterTransactions() {
       noteCell = `<span class="tx-note-text">${t.notes}</span>`;
     }
 
-    // Description: merchant + optional CC notes (installments, foreign currency)
+    // Description: merchant + optional CC notes (installments, discounts, foreign currency)
     // Strip "עסקה בקליטה" from notes when shown via the ⏳ badge already
     const cleanNotes = isPending
       ? (t.notes || '').replace(/עסקה בקליטה[:\s]*/g, '').trim() || null
       : t.notes;
-    const descExtra = isCCTx && cleanNotes
-      ? `<div class="tx-notes">${cleanNotes}</div>`
+
+    let installmentBadge = '', discountLine = '', remainingNotes = cleanNotes;
+    if (isCCTx && cleanNotes) {
+      // Installment badge: 'תשלום X מתוך Y'
+      const instM = cleanNotes.match(/תשלום\s+(\d+)\s+מתוך\s+(\d+)/);
+      if (instM) {
+        const isLast = cleanNotes.includes('תשלום אחרון');
+        installmentBadge = `<span class="installment-badge">תשלום ${instM[1]}/${instM[2]}${isLast ? ' – אחרון' : ''}</span>`;
+        remainingNotes = cleanNotes
+          .replace(/תשלום\s+\d+\s+מתוך\s+\d+/g, '').replace(/תשלום אחרון/g, '')
+          .replace(/\s*\|\s*/g, ' ').trim() || null;
+      }
+      // Discount sub-text: 'הנחה ₪XX.XX'
+      const discM = (remainingNotes || '').match(/הנחה\s+₪[\d.]+/);
+      if (discM) {
+        discountLine = `<div class="discount-note">✓ ${discM[0]}</div>`;
+        remainingNotes = (remainingNotes || '')
+          .replace(/הנחה\s+₪[\d.]+/g, '').replace(/\s*\|\s*/g, ' ').trim() || null;
+      }
+    }
+    const descExtra = isCCTx && (installmentBadge || discountLine || remainingNotes)
+      ? `${installmentBadge ? ' ' + installmentBadge : ''}${discountLine}${remainingNotes ? `<div class="tx-notes">${remainingNotes}</div>` : ''}`
       : '';
 
     const bankName = bankForTx(t);
