@@ -1361,6 +1361,13 @@ function renderTransactions() {
       '<th style="width:5%" class="th-num">יתרה</th>';
   }
 
+  // Bank filter: distinct resolved bank names across all transactions
+  const banks = [...new Set(transactions.map(t => bankForTx(t)).filter(Boolean))].sort();
+  const bankSel = document.getElementById('tx-filter-bank');
+  bankSel.innerHTML = '<option value="">כל הבנקים</option>' +
+    banks.map(b => `<option value="${b}">${b}</option>`).join('');
+
+  // Account filter: grouped by bank/CC
   const bankAccounts = [...new Set(transactions.filter(t => !CC_SOURCE_TYPES.has(t.source_type)).map(t => t.account))];
   const ccAccounts   = [...new Set(transactions.filter(t =>  CC_SOURCE_TYPES.has(t.source_type)).map(t => t.account))];
 
@@ -1412,7 +1419,9 @@ function buildStaleAccounts() {
 }
 
 function filterTransactions() {
+  const bank   = document.getElementById('tx-filter-bank').value;
   const acct   = document.getElementById('tx-filter-account').value;
+  const type   = document.getElementById('tx-filter-type').value;
   const search = document.getElementById('tx-search').value.toLowerCase();
 
   // Detect if the selected filter is a bank account (not CC)
@@ -1420,14 +1429,21 @@ function filterTransactions() {
     !transactions.some(t => t.account === acct && CC_SOURCE_TYPES.has(t.source_type));
 
   let filtered = transactions;
+
+  // Bank filter: uses bankForTx() to group bank + its CC transactions together
+  if (bank)   filtered = filtered.filter(t => bankForTx(t) === bank);
   if (acct)   filtered = filtered.filter(t => t.account === acct);
+  if (type === 'bank') filtered = filtered.filter(t => !CC_SOURCE_TYPES.has(t.source_type));
+  if (type === 'cc')   filtered = filtered.filter(t =>  CC_SOURCE_TYPES.has(t.source_type));
   if (search) filtered = filtered.filter(t =>
     (t.description || '').toLowerCase().includes(search) ||
     (t.notes       || '').toLowerCase().includes(search));
 
   // Add synthetic CC billing rows when a bank account is selected without a text search
+  // (also works when bank filter is active and selects a pure-bank account)
   let synthetic = [];
-  if (selectedIsBank && !search) synthetic = buildCCBillingRows(acct);
+  const effectiveBank = selectedIsBank ? acct : (bank && !acct && type !== 'cc' ? null : null);
+  if (selectedIsBank && !search && !type) synthetic = buildCCBillingRows(acct);
 
   const allRows = [...filtered, ...synthetic]
     .sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.id || 0) - (a.id || 0));

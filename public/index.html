@@ -267,8 +267,16 @@
       <div class="view-header">
         <h1>עסקאות</h1>
         <div class="header-actions">
+          <select id="tx-filter-bank" onchange="filterTransactions()" style="padding:6px 10px;border-radius:6px;border:1px solid #ddd;font-size:13px">
+            <option value="">כל הבנקים</option>
+          </select>
           <select id="tx-filter-account" onchange="filterTransactions()" style="padding:6px 10px;border-radius:6px;border:1px solid #ddd;font-size:13px">
             <option value="">כל החשבונות</option>
+          </select>
+          <select id="tx-filter-type" onchange="filterTransactions()" style="padding:6px 10px;border-radius:6px;border:1px solid #ddd;font-size:13px">
+            <option value="">כל הסוגים</option>
+            <option value="bank">בנק בלבד</option>
+            <option value="cc">אשראי בלבד</option>
           </select>
           <input type="text" id="tx-search" onkeyup="filterTransactions()" placeholder="חיפוש..." style="padding:6px 10px;border-radius:6px;border:1px solid #ddd;font-size:13px;width:160px">
         </div>
