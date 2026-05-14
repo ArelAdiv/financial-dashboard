@@ -522,6 +522,13 @@ function fmt(n) {
   return '₪ ' + Math.round(n).toLocaleString('he-IL');
 }
 
+function fmtExact(n) {
+  if (n === undefined || n === null || isNaN(n)) return '—';
+  const fixed = Number(n).toFixed(2);
+  const [whole, dec] = fixed.split('.');
+  const formatted = Number(whole).toLocaleString('he-IL');
+  return '₪ ' + formatted + (dec === '00' ? '' : '.' + dec);
+}
 function renderDashboard() {
   if (!profile) return;
 
@@ -686,15 +693,15 @@ function renderReconciliation(recon) {
     if (!d) continue;
 
     // Upcoming billing line
-    const upcomingLine = `<div class="recon-row"><span class="recon-label">צפי לחיוב הבא:</span><span class="recon-val">${d.expected ? fmt(d.expected) : '—'}<span class="recon-date-hint"> (${fmtDate(d.billing_date)})</span></span></div>`;
+    const upcomingLine = `<div class="recon-row"><span class="recon-label">צפי לחיוב הבא:</span><span class="recon-val">${d.expected ? fmtExact(d.expected) : '—'}<span class="recon-date-hint"> (${fmtDate(d.billing_date)})</span></span></div>`;
 
     // Previous billing section (only if actual is known)
     let prevSection = '';
     if (d.actual != null || d.diff != null) {
-      const ccTotalLine = `<span>סכימת CC: <strong>${d.expected ? fmt(d.expected) : '—'}</strong></span>`;
-      const actualLine  = `<span>הורדה בפועל: <strong>${d.actual != null ? fmt(d.actual) : '—'}</strong></span>`;
-      const diffLine    = `<span>הפרש: <strong class="${d.diff != null && d.diff > 10 ? 'neg' : ''}">${d.diff != null ? fmt(d.diff) : '—'}</strong></span>`;
-      prevSection = `<div class="recon-prev-label">חיוב קודם:</div><div class="recon-prev-row">${ccTotalLine} | ${actualLine} | ${diffLine}</div>`;
+      const ccTotalLine = `<span>סכימת CC: <strong>${d.expected ? fmtExact(d.expected) : '—'}</strong></span>`;
+      const actualLine  = `<span>הורדה בפועל: <strong>${d.actual != null ? fmtExact(d.actual) : '—'}</strong></span>`;
+      const diffLine    = `<span>הפרש: <strong class="${d.diff != null && d.diff > 10 ? 'neg' : ''}">${d.diff != null ? fmtExact(d.diff) : '—'}</strong></span>`;
+      prevSection = `<div class="recon-prev-label">חיוב קודם (${fmtDate(d.billing_date)}):</div><div class="recon-prev-row">${ccTotalLine} | ${actualLine} | ${diffLine}</div>`;
     }
 
     const badge = `<span class="recon-status-badge ${d.status}">${STATUS_LABEL[d.status] || d.status}</span>`;
@@ -771,9 +778,9 @@ async function openReconModal(digits) {
       html += `<tr class="recon-hist-row ${row.status}">
         <td>${monthLabel}</td>
         <td>${fmtDate(row.billing_date)}</td>
-        <td class="num">${fmt(row.cc_total)}</td>
-        <td class="num">${row.actual != null ? fmt(row.actual) : '—'}</td>
-        <td class="num ${row.diff > 10 ? 'neg' : ''}">${row.diff != null ? fmt(row.diff) : '—'}</td>
+        <td class="num">${fmtExact(row.cc_total)}</td>
+        <td class="num">${row.actual != null ? fmtExact(row.actual) : '—'}</td>
+        <td class="num ${row.diff > 10 ? 'neg' : ''}">${row.diff != null ? fmtExact(row.diff) : '—'}</td>
         <td><span class="recon-status-badge ${row.status}">${STATUS_LABEL[row.status]||row.status}</span></td>
       </tr>`;
     }
@@ -870,6 +877,7 @@ function openCCModal(idx) {
   document.getElementById('cc-modal-owner').value   = c.owner   || '';
   document.getElementById('cc-modal-day').value     = c.day     || '';
   document.getElementById('cc-modal-limit').value   = c.credit_limit || '';
+  document.getElementById('cc-modal-ref').value     = c.debit_reference || '';
 
   const bankSel = document.getElementById('cc-modal-linked');
   const banks = profile?.banks || [];
@@ -888,12 +896,13 @@ async function saveCCModal() {
   if (_ccModalIdx === null || _ccModalIdx >= cards.length) return;
   cards[_ccModalIdx] = {
     ...cards[_ccModalIdx],
-    company:       document.getElementById('cc-modal-company').value,
-    digits:        document.getElementById('cc-modal-digits').value.trim() || null,
-    owner:         document.getElementById('cc-modal-owner').value.trim(),
-    day:           parseInt(document.getElementById('cc-modal-day').value)   || null,
-    linked_account: document.getElementById('cc-modal-linked').value         || null,
-    credit_limit:  parseFloat(document.getElementById('cc-modal-limit').value) || null,
+    company:         document.getElementById('cc-modal-company').value,
+    digits:          document.getElementById('cc-modal-digits').value.trim() || null,
+    owner:           document.getElementById('cc-modal-owner').value.trim(),
+    day:             parseInt(document.getElementById('cc-modal-day').value)   || null,
+    linked_account:  document.getElementById('cc-modal-linked').value         || null,
+    credit_limit:    parseFloat(document.getElementById('cc-modal-limit').value) || null,
+    debit_reference: document.getElementById('cc-modal-ref').value.trim()    || null,
   };
   await fetch('/api/profile', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ creditCards: cards }) });
   profile = await fetch('/api/profile').then(r => r.json());

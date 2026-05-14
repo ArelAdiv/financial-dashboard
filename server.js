@@ -157,8 +157,24 @@ const CC_COMPANY_ALIASES = {
 
 function findActualDebit(card, billingDate) {
   if (!card.linked_account || !billingDate) return null;
-  const dateFrom = shiftDate(billingDate, -2);
-  const dateTo   = shiftDate(billingDate, +2);
+  const dateFrom = shiftDate(billingDate, -5);
+  const dateTo   = shiftDate(billingDate, +5);
+  const accountLike = `%${card.linked_account.toLowerCase()}%`;
+
+  // Primary: match by debit_reference (most reliable)
+  if (card.debit_reference) {
+    const refLike = `%${card.debit_reference}%`;
+    const row = db.prepare(`
+      SELECT amount FROM transactions
+      WHERE date BETWEEN ? AND ? AND amount < 0
+        AND LOWER(account) LIKE ?
+        AND (reference LIKE ? OR LOWER(description) LIKE ?)
+      ORDER BY ABS(JULIANDAY(date) - JULIANDAY(?)) LIMIT 1
+    `).get(dateFrom, dateTo, accountLike, refLike, refLike, billingDate);
+    if (row) return Math.abs(row.amount);
+  }
+
+  // Fallback: match by company name keywords in description
   const keywords = [
     ...(CC_COMPANY_ALIASES[card.company] || [card.company].filter(Boolean)),
     card.digits,
@@ -170,9 +186,9 @@ function findActualDebit(card, billingDate) {
     SELECT SUM(amount) AS total FROM transactions
     WHERE date BETWEEN ? AND ? AND amount < 0
       AND LOWER(account) LIKE ? AND (${conds})
-  `).get(dateFrom, dateTo, `%${card.linked_account.toLowerCase()}%`, ...values);
+  `).get(dateFrom, dateTo, accountLike, ...values);
   if (row?.total == null) return null;
-  return Math.round(Math.abs(row.total) * 100) / 100;
+  return Math.abs(row.total);
 }
 
 function recalcReconciliation(profileData) {
@@ -202,20 +218,23 @@ function recalcReconciliation(profileData) {
     const nextBilling = `${nextY}-${pad(nextM)}-${pad(billingDay)}`;
     const lastBilling = `${lastY}-${pad(lastM)}-${pad(billingDay)}`;
 
+    // Sum CC transactions for a given billing month (no rounding — keep full precision)
     const calcExpected = (y, m) => {
+      // Last day of month
+      const lastDay = new Date(y, m, 0).getDate();
       const row = db.prepare(`
         SELECT COALESCE(SUM(ABS(amount)),0) AS total FROM transactions
         WHERE card_digits=? AND (status='cleared' OR status='pending')
           AND billing_date BETWEEN ? AND ? AND amount < 0
-      `).get(digits, `${y}-${pad(m)}-01`, `${y}-${pad(m)}-31`);
-      return Math.round((row?.total || 0) * 100) / 100;
+      `).get(digits, `${y}-${pad(m)}-01`, `${y}-${pad(m)}-${pad(lastDay)}`);
+      return row?.total || 0;
     };
 
     // If bank debit found for last billing → matched/mismatch
     const actual = findActualDebit(card, lastBilling);
     if (actual !== null) {
       const expected = calcExpected(lastY, lastM);
-      const diff = Math.round(Math.abs(actual - expected) * 100) / 100;
+      const diff = Math.abs(actual - expected);
       result[digits] = { billing_date: lastBilling, expected, actual,
         status: diff <= 10 ? 'matched' : 'mismatch', diff };
     } else if (todayStr < nextBilling) {
@@ -440,11 +459,11 @@ app.get('/api/reconciliation/:digits/history', (req, res) => {
     const [y, m] = row.ym.split('-').map(Number);
     const billingDate = billingDay ? `${y}-${pad(m)}-${pad(billingDay)}` : null;
     const actual = billingDate ? findActualDebit(card, billingDate) : null;
-    const diff = actual != null ? Math.round(Math.abs(actual - row.cc_total) * 100) / 100 : null;
+    const diff = actual != null ? Math.abs(actual - row.cc_total) : null;
     const status = actual != null
       ? (diff <= 10 ? 'matched' : 'mismatch')
       : 'missing';
-    return { ym: row.ym, billing_date: billingDate, cc_total: Math.round(row.cc_total * 100) / 100, actual, diff, status, tx_count: row.tx_count };
+    return { ym: row.ym, billing_date: billingDate, cc_total: row.cc_total, actual, diff, status, tx_count: row.tx_count };
   });
 
   res.json({ card, history });
