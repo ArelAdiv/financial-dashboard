@@ -435,6 +435,16 @@
   </div>
 </div>
 
+<div id="recon-modal-overlay" class="modal-overlay hidden" onclick="closeReconModal(event)">
+  <div class="modal-box" style="max-width:700px;width:95%" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <h3 id="recon-modal-title">היסטוריית חיובים</h3>
+      <button onclick="closeReconModal()" style="background:none;border:none;font-size:20px;cursor:pointer;color:#999">&#x2715;</button>
+    </div>
+    <div id="recon-modal-body" style="max-height:60vh;overflow-y:auto;padding-top:8px"></div>
+  </div>
+</div>
+
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <script src="/js/app.js?v=2"></script>
 </body>

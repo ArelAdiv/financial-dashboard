@@ -684,19 +684,25 @@ function renderReconciliation(recon) {
   for (const cc of cards) {
     const d = recon[cc.digits];
     if (!d) continue;
-    const name    = [cc.company, cc.digits ? `•••• ${cc.digits}` : ''].filter(Boolean).join(' ');
-    const expLine = `<div class="recon-row"><span class="recon-label">צפוי לחיוב</span><span class="recon-val">${d.expected ? fmt(d.expected) : '—'}</span></div>`;
-    const actLine = d.actual != null
-      ? `<div class="recon-row"><span class="recon-label">חויב בפועל</span><span class="recon-val ${d.actual <= d.expected ? 'pos' : 'neg'}">${fmt(d.actual)}</span></div>`
-      : '';
-    const diffLine = d.diff != null && d.diff > 0
-      ? `<div class="recon-row"><span class="recon-label">הפרש</span><span class="recon-val neg">${fmt(d.diff)}</span></div>`
-      : '';
+
+    // Upcoming billing line
+    const upcomingLine = `<div class="recon-row"><span class="recon-label">צפי לחיוב הבא:</span><span class="recon-val">${d.expected ? fmt(d.expected) : '—'}<span class="recon-date-hint"> (${fmtDate(d.billing_date)})</span></span></div>`;
+
+    // Previous billing section (only if actual is known)
+    let prevSection = '';
+    if (d.actual != null || d.diff != null) {
+      const ccTotalLine = `<span>סכימת CC: <strong>${d.expected ? fmt(d.expected) : '—'}</strong></span>`;
+      const actualLine  = `<span>הורדה בפועל: <strong>${d.actual != null ? fmt(d.actual) : '—'}</strong></span>`;
+      const diffLine    = `<span>הפרש: <strong class="${d.diff != null && d.diff > 10 ? 'neg' : ''}">${d.diff != null ? fmt(d.diff) : '—'}</strong></span>`;
+      prevSection = `<div class="recon-prev-label">חיוב קודם:</div><div class="recon-prev-row">${ccTotalLine} | ${actualLine} | ${diffLine}</div>`;
+    }
+
     const badge = `<span class="recon-status-badge ${d.status}">${STATUS_LABEL[d.status] || d.status}</span>`;
-    html += `<div class="recon-card ${d.status}">
+    html += `<div class="recon-card ${d.status}" onclick="openReconModal('${cc.digits}')" style="cursor:pointer">
       <div class="recon-card-name">${cc.company || 'כרטיס'}</div>
       <div class="recon-card-digits">${cc.digits ? `•••• ${cc.digits}` : ''} | חיוב: ${fmtDate(d.billing_date)}</div>
-      ${expLine}${actLine}${diffLine}
+      ${upcomingLine}
+      ${prevSection}
       ${badge}
     </div>`;
   }

@@ -414,6 +414,42 @@ app.get('/api/reconciliation', (req, res) => {
   res.json(recon);
 });
 
+app.get('/api/reconciliation/:digits/history', (req, res) => {
+  const { digits } = req.params;
+  const profileData = loadProfile() || {};
+  const card = (profileData.creditCards || []).find(c => c.digits === digits);
+  if (!card) return res.status(404).json({ error: 'card not found' });
+
+  // Get all distinct billing months for this card from transactions
+  const billingMonths = db.prepare(`
+    SELECT SUBSTR(billing_date, 1, 7) AS ym,
+           COUNT(*) AS tx_count,
+           COALESCE(SUM(CASE WHEN amount < 0 THEN ABS(amount) ELSE 0 END), 0) AS cc_total
+    FROM transactions
+    WHERE card_digits = ? AND billing_date IS NOT NULL
+      AND (status = 'cleared' OR status = 'pending')
+    GROUP BY ym
+    ORDER BY ym DESC
+  `).all(digits);
+
+  // For each billing month, determine billing date and find actual bank debit
+  const pad = n => String(n).padStart(2, '0');
+  const billingDay = card.day;
+
+  const history = billingMonths.map(row => {
+    const [y, m] = row.ym.split('-').map(Number);
+    const billingDate = billingDay ? `${y}-${pad(m)}-${pad(billingDay)}` : null;
+    const actual = billingDate ? findActualDebit(card, billingDate) : null;
+    const diff = actual != null ? Math.round(Math.abs(actual - row.cc_total) * 100) / 100 : null;
+    const status = actual != null
+      ? (diff <= 10 ? 'matched' : 'mismatch')
+      : 'missing';
+    return { ym: row.ym, billing_date: billingDate, cc_total: Math.round(row.cc_total * 100) / 100, actual, diff, status, tx_count: row.tx_count };
+  });
+
+  res.json({ card, history });
+});
+
 // Labels and source types for known profile keys
 const PROFILE_KEY_META = {
   live_balances:    { source_type: 'poalim_daily_balances', label: 'DailyBalances.xlsx' },
