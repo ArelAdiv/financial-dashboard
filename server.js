@@ -159,25 +159,22 @@ function findActualDebit(card, billingDate) {
   if (!billingDate) return null;
   const dateFrom = shiftDate(billingDate, -5);
   const dateTo   = shiftDate(billingDate, +5);
+  const CC_TYPES = `'cal_cc','isracard_cc','max_cc'`;
 
-  // Primary: match by debit_reference — search all bank accounts (reference is unique)
+  // Primary: match by debit_reference — no account filter needed, reference is unique
   if (card.debit_reference) {
-    const refStr  = card.debit_reference.toString();
-    const refLike = `%${refStr}%`;
-    // Search without account restriction: reference uniquely identifies the charge
+    const refLike = `%${card.debit_reference}%`;
     const row = db.prepare(`
       SELECT amount FROM transactions
       WHERE date BETWEEN ? AND ? AND amount < 0
-        AND source_type NOT IN ('cal_cc','isracard_cc','max_cc')
+        AND source_type NOT IN (${CC_TYPES})
         AND (reference LIKE ? OR LOWER(description) LIKE ?)
       ORDER BY ABS(JULIANDAY(date) - JULIANDAY(?)) LIMIT 1
     `).get(dateFrom, dateTo, refLike, refLike, billingDate);
     if (row) return Math.abs(row.amount);
   }
 
-  // Fallback: keyword search in linked_account (if configured)
-  if (!card.linked_account) return null;
-  const accountLike = `%${card.linked_account.toLowerCase()}%`;
+  // Fallback: keyword search in ALL bank accounts (no account filter)
   const keywords = [
     ...(CC_COMPANY_ALIASES[card.company] || [card.company].filter(Boolean)),
     card.digits,
@@ -186,14 +183,14 @@ function findActualDebit(card, billingDate) {
   const conds  = keywords.map(() => 'LOWER(description) LIKE ?').join(' OR ');
   const values = keywords.map(k => `%${k.toLowerCase()}%`);
   const row = db.prepare(`
-    SELECT SUM(amount) AS total FROM transactions
+    SELECT amount FROM transactions
     WHERE date BETWEEN ? AND ? AND amount < 0
-      AND LOWER(account) LIKE ?
-      AND source_type NOT IN ('cal_cc','isracard_cc','max_cc')
+      AND source_type NOT IN (${CC_TYPES})
       AND (${conds})
-  `).get(dateFrom, dateTo, accountLike, ...values);
-  if (row?.total == null) return null;
-  return Math.abs(row.total);
+    ORDER BY ABS(JULIANDAY(date) - JULIANDAY(?)) LIMIT 1
+  `).get(dateFrom, dateTo, ...values, billingDate);
+  if (row?.amount == null) return null;
+  return Math.abs(row.amount);
 }
 
 function recalcReconciliation(profileData) {
