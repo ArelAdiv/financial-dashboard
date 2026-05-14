@@ -223,8 +223,8 @@ function recalcReconciliation(profileData) {
       result[digits] = { billing_date: nextBilling, expected: calcExpected(nextY, nextM),
         actual: null, status: 'upcoming', diff: null };
     } else {
-      // Billing date passed but no debit found → missing
-      result[digits] = { billing_date: nextBilling, expected: calcExpected(nextY, nextM),
+      // Billing date passed but no debit found → missing (show last billing info)
+      result[digits] = { billing_date: lastBilling, expected: calcExpected(lastY, lastM),
         actual: null, status: 'missing', diff: null };
     }
   }

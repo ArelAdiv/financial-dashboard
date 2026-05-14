@@ -734,6 +734,56 @@ function renderReconciliation(recon) {
   card.style.display = '';
 }
 
+// ── Reconciliation modal ──────────────────────────────────────────────────────
+function closeReconModal(e) {
+  if (e && e.target !== document.getElementById('recon-modal-overlay')) return;
+  document.getElementById('recon-modal-overlay').classList.add('hidden');
+}
+window.closeReconModal = function(e) {
+  if (e && e.target !== document.getElementById('recon-modal-overlay')) return;
+  document.getElementById('recon-modal-overlay').classList.add('hidden');
+};
+
+async function openReconModal(digits) {
+  const overlay = document.getElementById('recon-modal-overlay');
+  const body    = document.getElementById('recon-modal-body');
+  const title   = document.getElementById('recon-modal-title');
+  body.innerHTML = '<div style="text-align:center;padding:2rem;color:#999">טוען...</div>';
+  overlay.classList.remove('hidden');
+
+  try {
+    const { card, history } = await fetch(`/api/reconciliation/${digits}/history`).then(r => r.json());
+    const name = [card.company, digits ? `•••• ${digits}` : ''].filter(Boolean).join(' ');
+    title.textContent = `היסטוריית חיובים — ${name}`;
+
+    if (!history.length) { body.innerHTML = '<div style="padding:2rem;text-align:center;color:#999">אין נתונים</div>'; return; }
+
+    const STATUS_LABEL = { matched: 'תואם', mismatch: 'אי-התאמה', upcoming: 'צפוי', missing: 'לא נמצא' };
+    const fmtDate = d => d ? d.substring(8,10)+'/'+d.substring(5,7)+'/'+d.substring(0,4) : '—';
+
+    let html = `<table class="recon-history-table">
+      <thead><tr>
+        <th>חודש חיוב</th><th>תאריך הורדה</th><th>סכימת CC</th><th>הורדה בפועל</th><th>הפרש</th><th>סטטוס</th>
+      </tr></thead><tbody>`;
+    for (const row of history) {
+      const [y, m] = row.ym.split('-');
+      const monthLabel = new Date(Number(y), Number(m)-1, 1).toLocaleDateString('he-IL', { month: 'long', year: 'numeric' });
+      html += `<tr class="recon-hist-row ${row.status}">
+        <td>${monthLabel}</td>
+        <td>${fmtDate(row.billing_date)}</td>
+        <td class="num">${fmt(row.cc_total)}</td>
+        <td class="num">${row.actual != null ? fmt(row.actual) : '—'}</td>
+        <td class="num ${row.diff > 10 ? 'neg' : ''}">${row.diff != null ? fmt(row.diff) : '—'}</td>
+        <td><span class="recon-status-badge ${row.status}">${STATUS_LABEL[row.status]||row.status}</span></td>
+      </tr>`;
+    }
+    html += '</tbody></table>';
+    body.innerHTML = html;
+  } catch(e) {
+    body.innerHTML = '<div style="padding:2rem;color:red">שגיאה בטעינת נתונים</div>';
+  }
+}
+
 // ── CC helpers ────────────────────────────────────────────────────────────────
 const CC_PALETTE = ['#2563eb', '#ea580c', '#16a34a', '#7c3aed', '#0891b2'];
 function getCCColor(account) {

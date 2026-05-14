@@ -537,7 +537,36 @@ body {
 .recon-status-badge.mismatch { background: var(--red-bg); color: var(--red); }
 .recon-status-badge.upcoming { background: var(--blue-bg); color: var(--blue); }
 .recon-status-badge.missing  { background: var(--orange-bg); color: var(--orange); }
+.recon-prev-label { font-size: 11px; color: var(--text-muted); margin-top: 6px; margin-bottom: 2px; }
+.recon-prev-row { font-size: 12px; display: flex; flex-wrap: wrap; gap: 4px; }
 .recon-bank-summary { border-top: 1px solid var(--border); margin-top: 12px; padding-top: 12px; font-size: 13px; }
 .recon-bank-summary-title { font-weight: 600; margin-bottom: 6px; }
 .recon-bank-row { display: flex; justify-content: space-between; padding: 3px 0; }
 .recon-bank-row + .recon-bank-row { border-top: 1px solid var(--border); }
+
+/* MODAL OVERLAY */
+.modal-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,.45);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 1000;
+}
+.modal-box {
+  background: var(--surface); border-radius: 14px;
+  padding: 24px; box-shadow: 0 8px 32px rgba(0,0,0,.25);
+}
+.modal-header {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-bottom: 12px; border-bottom: 1px solid var(--border); padding-bottom: 10px;
+}
+.modal-header h3 { margin: 0; font-size: 16px; }
+
+/* RECONCILIATION HISTORY TABLE */
+.recon-history-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.recon-history-table th { text-align: right; padding: 6px 10px; border-bottom: 2px solid var(--border); font-weight: 600; color: var(--text-muted); }
+.recon-history-table td { padding: 7px 10px; border-bottom: 1px solid var(--border); }
+.recon-hist-row:hover td { background: var(--bg); }
+.recon-history-table td.num { text-align: left; direction: ltr; font-weight: 500; }
+.recon-hist-row.matched td:first-child { border-right: 3px solid #86efac; }
+.recon-hist-row.mismatch td:first-child { border-right: 3px solid #fca5a5; }
+.recon-hist-row.missing td:first-child { border-right: 3px solid #fdba74; }
+.neg { color: var(--red); }
