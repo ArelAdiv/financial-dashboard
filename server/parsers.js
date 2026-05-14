@@ -3,6 +3,20 @@
 const fs     = require('fs');
 const path   = require('path');
 const xlsx   = require('xlsx');
+
+// Keywords that indicate a credit/refund transaction in CC statements.
+// If the raw amount is negative OR the description/type contains these,
+// the transaction is stored as positive (income/credit).
+const CC_CREDIT_KEYWORDS = ['זיכוי', 'החזר', 'פטור', 'ביטול', 'הנחה'];
+
+function ccAmount(amountRaw, desc, txType, notes) {
+  const isCredit = amountRaw < 0 ||
+    CC_CREDIT_KEYWORDS.some(k =>
+      (desc  && desc.includes(k))   ||
+      (txType && txType.includes(k)) ||
+      (notes  && notes.includes(k)));
+  return isCredit ? Math.abs(amountRaw) : -Math.abs(amountRaw);
+}
 const crypto = require('crypto');
 
 function makePendingKey(description, amount, date) {
@@ -909,7 +923,7 @@ function parseIsracard(rows, accountName, sourceFile) {
 
     transactions.push({
       date, description,
-      amount:       -Math.abs(amountRaw),
+      amount:       ccAmount(amountRaw, description, null, notes),
       balance:      null,
       category:     null,
       reference,
@@ -1035,7 +1049,8 @@ function parseMax(filePath, accountName, sourceFile) {
       if (txType === 'הוראת קבע') noteParts.push('הוראת קבע');
 
       const description  = str(row[1]);
-      const txAmount     = -Math.abs(amountRaw);
+      const notes        = noteParts.join(' | ') || null;
+      const txAmount     = ccAmount(amountRaw, description, txType, notes);
       const txStatus     = isPending ? 'pending' : 'cleared';
       const txPendingKey = makePendingKey(description, txAmount, date);
 
@@ -1046,7 +1061,7 @@ function parseMax(filePath, accountName, sourceFile) {
         balance:      null,
         category:     str(row[2]) || null,      // col C – real consumer category
         reference:    null,
-        notes:        noteParts.join(' | ') || null,
+        notes:        notes,
         billing_date: billingDate,
         card_digits:  rowDigits,
         status:       txStatus,
@@ -1102,7 +1117,7 @@ function parseCal(rows, accountName, sourceFile) {
     const txType      = dc.tx_type >= 0 ? str(row[dc.tx_type]) || null : null;
     const notes       = dc.notes  >= 0 ? str(row[dc.notes])   || null : null;
     const desc        = str(row[dc.desc]) || '';
-    const txAmount    = -Math.abs(amountRaw);
+    const txAmount    = ccAmount(amountRaw, desc, txType, notes);
     const isPending   = !!(txType && txType.includes('בקליטה'));
 
     transactions.push({
