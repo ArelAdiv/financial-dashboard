@@ -156,25 +156,28 @@ const CC_COMPANY_ALIASES = {
 };
 
 function findActualDebit(card, billingDate) {
-  if (!card.linked_account || !billingDate) return null;
+  if (!billingDate) return null;
   const dateFrom = shiftDate(billingDate, -5);
   const dateTo   = shiftDate(billingDate, +5);
-  const accountLike = `%${card.linked_account.toLowerCase()}%`;
 
-  // Primary: match by debit_reference (most reliable)
+  // Primary: match by debit_reference — search all bank accounts (reference is unique)
   if (card.debit_reference) {
-    const refLike = `%${card.debit_reference}%`;
+    const refStr  = card.debit_reference.toString();
+    const refLike = `%${refStr}%`;
+    // Search without account restriction: reference uniquely identifies the charge
     const row = db.prepare(`
       SELECT amount FROM transactions
       WHERE date BETWEEN ? AND ? AND amount < 0
-        AND LOWER(account) LIKE ?
+        AND source_type NOT IN ('cal_cc','isracard_cc','max_cc')
         AND (reference LIKE ? OR LOWER(description) LIKE ?)
       ORDER BY ABS(JULIANDAY(date) - JULIANDAY(?)) LIMIT 1
-    `).get(dateFrom, dateTo, accountLike, refLike, refLike, billingDate);
+    `).get(dateFrom, dateTo, refLike, refLike, billingDate);
     if (row) return Math.abs(row.amount);
   }
 
-  // Fallback: match by company name keywords in description
+  // Fallback: keyword search in linked_account (if configured)
+  if (!card.linked_account) return null;
+  const accountLike = `%${card.linked_account.toLowerCase()}%`;
   const keywords = [
     ...(CC_COMPANY_ALIASES[card.company] || [card.company].filter(Boolean)),
     card.digits,
@@ -185,7 +188,9 @@ function findActualDebit(card, billingDate) {
   const row = db.prepare(`
     SELECT SUM(amount) AS total FROM transactions
     WHERE date BETWEEN ? AND ? AND amount < 0
-      AND LOWER(account) LIKE ? AND (${conds})
+      AND LOWER(account) LIKE ?
+      AND source_type NOT IN ('cal_cc','isracard_cc','max_cc')
+      AND (${conds})
   `).get(dateFrom, dateTo, accountLike, ...values);
   if (row?.total == null) return null;
   return Math.abs(row.total);
@@ -218,15 +223,20 @@ function recalcReconciliation(profileData) {
     const nextBilling = `${nextY}-${pad(nextM)}-${pad(billingDay)}`;
     const lastBilling = `${lastY}-${pad(lastM)}-${pad(billingDay)}`;
 
-    // Sum CC transactions for a given billing month (no rounding — keep full precision)
+    // Sum CC transactions for a given billing month.
+    // Uses billing_date when available; falls back to transaction date for older imports.
     const calcExpected = (y, m) => {
-      // Last day of month
       const lastDay = new Date(y, m, 0).getDate();
+      const dateFrom = `${y}-${pad(m)}-01`;
+      const dateTo   = `${y}-${pad(m)}-${pad(lastDay)}`;
       const row = db.prepare(`
         SELECT COALESCE(SUM(ABS(amount)),0) AS total FROM transactions
-        WHERE card_digits=? AND (status='cleared' OR status='pending')
-          AND billing_date BETWEEN ? AND ? AND amount < 0
-      `).get(digits, `${y}-${pad(m)}-01`, `${y}-${pad(m)}-${pad(lastDay)}`);
+        WHERE card_digits=? AND (status='cleared' OR status='pending') AND amount < 0
+          AND (
+            (billing_date IS NOT NULL AND billing_date BETWEEN ? AND ?)
+            OR (billing_date IS NULL AND date BETWEEN ? AND ?)
+          )
+      `).get(digits, dateFrom, dateTo, dateFrom, dateTo);
       return row?.total || 0;
     };
 
@@ -439,14 +449,15 @@ app.get('/api/reconciliation/:digits/history', (req, res) => {
   const card = (profileData.creditCards || []).find(c => c.digits === digits);
   if (!card) return res.status(404).json({ error: 'card not found' });
 
-  // Get all distinct billing months for this card from transactions
+  // Get all distinct billing months for this card.
+  // Uses billing_date when set; falls back to transaction date for older imports.
   const billingMonths = db.prepare(`
-    SELECT SUBSTR(billing_date, 1, 7) AS ym,
+    SELECT SUBSTR(COALESCE(billing_date, date), 1, 7) AS ym,
+           SUM(CASE WHEN billing_date IS NOT NULL THEN 1 ELSE 0 END) AS with_billing_date,
            COUNT(*) AS tx_count,
            COALESCE(SUM(CASE WHEN amount < 0 THEN ABS(amount) ELSE 0 END), 0) AS cc_total
     FROM transactions
-    WHERE card_digits = ? AND billing_date IS NOT NULL
-      AND (status = 'cleared' OR status = 'pending')
+    WHERE card_digits = ? AND (status = 'cleared' OR status = 'pending')
     GROUP BY ym
     ORDER BY ym DESC
   `).all(digits);
