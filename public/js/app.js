@@ -1534,18 +1534,17 @@ function doSaveCat(cell, desc, category) {
 }
 
 async function saveTxCategory(description, category) {
+  // Optimistic update: apply immediately before waiting for server
+  for (const t of transactions) {
+    if (t.description === description) t.category = category || null;
+  }
+  filterTransactions();
   try {
     await fetch('/api/categories', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ description, category })
     });
-    // Update all matching transactions in local array
-    for (const t of transactions) {
-      if (t.description === description) t.category = category || null;
-    }
-    // Re-render so all rows with same description show the new category
-    filterTransactions();
   } catch (e) {
     console.error('category save failed', e);
   }
