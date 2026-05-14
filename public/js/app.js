@@ -1287,6 +1287,7 @@ function buildStaleAccounts() {
 }
 
 function filterTransactions() {
+  console.log('[cat] filterTransactions called', new Error().stack?.split('\n')[2]?.trim());
   const acct   = document.getElementById('tx-filter-account').value;
   const search = document.getElementById('tx-search').value.toLowerCase();
 
@@ -1469,6 +1470,7 @@ function editCategoryCell(cell) {
   select.focus();
 
   select.addEventListener('change', () => {
+    console.log('[cat] change fired, select.value=', select.value, 'desc=', desc);
     if (select.value === 'אחר') {
       input.style.display = 'inline';
       input.focus();
@@ -1483,10 +1485,12 @@ function editCategoryCell(cell) {
   // trigger it. Blur listeners are intentionally NOT used — native <select>
   // fires blur when its dropdown opens, which caused premature re-renders.
   function cleanup() {
+    console.log('[cat] cleanup called');
     document.removeEventListener('mousedown', onOutsideClick);
   }
   function onOutsideClick(e) {
     if (!cell.contains(e.target)) {
+      console.log('[cat] onOutsideClick fired, select.value=', select.value, 'desc=', desc);
       cleanup();
       const cat = select.value === 'אחר' ? input.value.trim() : select.value;
       doSaveCat(cell, desc, cat);
@@ -1501,6 +1505,7 @@ function editCategoryCell(cell) {
 }
 
 function doSaveCat(cell, desc, category) {
+  console.log('[cat] doSaveCat called: desc=', desc, 'category=', category);
   cell.classList.remove('editing');
   // Persist new user-created categories to localStorage
   if (category && !TX_CATEGORIES.includes(category) && !isPaymentTypeCat(category)) {
@@ -1514,6 +1519,7 @@ function doSaveCat(cell, desc, category) {
 }
 
 async function saveTxCategory(description, category) {
+  console.log('[cat] saveTxCategory: description=', description, 'category=', category);
   // Optimistic update: apply immediately before waiting for server
   for (const t of transactions) {
     if (t.description === description) t.category = category || null;
