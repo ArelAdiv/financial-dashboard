@@ -511,3 +511,33 @@ body {
 .snapshot-bal { font-weight: 600; white-space: nowrap; direction: ltr; }
 .snapshot-bal.pos { color: var(--green); }
 .snapshot-bal.neg { color: var(--red); }
+
+/* RECONCILIATION CARD */
+.recon-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 12px; padding: 4px 0 16px; }
+.recon-card {
+  background: var(--surface); border-radius: 10px; padding: 14px 16px;
+  border: 2px solid var(--border); position: relative;
+}
+.recon-card.matched  { border-color: #86efac; }
+.recon-card.mismatch { border-color: #fca5a5; }
+.recon-card.upcoming { border-color: #93c5fd; }
+.recon-card.missing  { border-color: #fdba74; }
+.recon-card-name  { font-size: 13px; font-weight: 600; margin-bottom: 2px; }
+.recon-card-digits { font-size: 11px; color: var(--text-muted); margin-bottom: 8px; }
+.recon-row { display: flex; justify-content: space-between; font-size: 12px; padding: 2px 0; }
+.recon-label { color: var(--text-secondary); }
+.recon-val   { font-weight: 600; direction: ltr; }
+.recon-val.pos { color: var(--green); }
+.recon-val.neg { color: var(--red); }
+.recon-status-badge {
+  display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 10px;
+  font-weight: 600; margin-top: 8px;
+}
+.recon-status-badge.matched  { background: #f0fdf4; color: var(--green); }
+.recon-status-badge.mismatch { background: var(--red-bg); color: var(--red); }
+.recon-status-badge.upcoming { background: var(--blue-bg); color: var(--blue); }
+.recon-status-badge.missing  { background: var(--orange-bg); color: var(--orange); }
+.recon-bank-summary { border-top: 1px solid var(--border); margin-top: 12px; padding-top: 12px; font-size: 13px; }
+.recon-bank-summary-title { font-weight: 600; margin-bottom: 6px; }
+.recon-bank-row { display: flex; justify-content: space-between; padding: 3px 0; }
+.recon-bank-row + .recon-bank-row { border-top: 1px solid var(--border); }

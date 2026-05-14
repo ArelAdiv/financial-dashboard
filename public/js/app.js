@@ -657,6 +657,75 @@ function renderDashboard() {
     balance: null, detail: l.lender || ''
   })));
 
+  loadReconciliation();
+}
+
+// ── Reconciliation ────────────────────────────────────────────────────────────
+async function loadReconciliation() {
+  try {
+    const data = await fetch('/api/reconciliation').then(r => r.json());
+    renderReconciliation(data);
+  } catch (e) { console.error('reconciliation load failed', e); }
+}
+
+function renderReconciliation(recon) {
+  const card = document.getElementById('card-reconciliation');
+  const el   = document.getElementById('dash-reconciliation');
+  if (!card || !el) return;
+  if (!recon || !Object.keys(recon).length) { card.style.display = 'none'; return; }
+
+  const cards = profile?.creditCards || [];
+  if (!cards.length) { card.style.display = 'none'; return; }
+
+  const STATUS_LABEL = { matched: 'תואם', mismatch: 'אי-התאמה', upcoming: 'צפוי', missing: 'לא נמצא' };
+  const fmtDate = d => d ? d.substring(8,10) + '/' + d.substring(5,7) + '/' + d.substring(0,4) : '—';
+
+  let html = '<div class="recon-grid">';
+  for (const cc of cards) {
+    const d = recon[cc.digits];
+    if (!d) continue;
+    const name    = [cc.company, cc.digits ? `•••• ${cc.digits}` : ''].filter(Boolean).join(' ');
+    const expLine = `<div class="recon-row"><span class="recon-label">צפוי לחיוב</span><span class="recon-val">${d.expected ? fmt(d.expected) : '—'}</span></div>`;
+    const actLine = d.actual != null
+      ? `<div class="recon-row"><span class="recon-label">חויב בפועל</span><span class="recon-val ${d.actual <= d.expected ? 'pos' : 'neg'}">${fmt(d.actual)}</span></div>`
+      : '';
+    const diffLine = d.diff != null && d.diff > 0
+      ? `<div class="recon-row"><span class="recon-label">הפרש</span><span class="recon-val neg">${fmt(d.diff)}</span></div>`
+      : '';
+    const badge = `<span class="recon-status-badge ${d.status}">${STATUS_LABEL[d.status] || d.status}</span>`;
+    html += `<div class="recon-card ${d.status}">
+      <div class="recon-card-name">${cc.company || 'כרטיס'}</div>
+      <div class="recon-card-digits">${cc.digits ? `•••• ${cc.digits}` : ''} | חיוב: ${fmtDate(d.billing_date)}</div>
+      ${expLine}${actLine}${diffLine}
+      ${badge}
+    </div>`;
+  }
+  html += '</div>';
+
+  // Bank debit summary: per linked_account, show total expected upcoming/missing charges
+  const bankTotals = {};
+  for (const cc of cards) {
+    const d = recon[cc.digits];
+    if (!d || !cc.linked_account) continue;
+    if (!bankTotals[cc.linked_account]) bankTotals[cc.linked_account] = { upcoming: 0, matched: 0, mismatch: 0 };
+    if (d.status === 'upcoming' || d.status === 'missing') bankTotals[cc.linked_account].upcoming += d.expected || 0;
+    if (d.status === 'matched')  bankTotals[cc.linked_account].matched  += d.actual  || 0;
+    if (d.status === 'mismatch') bankTotals[cc.linked_account].mismatch += d.actual  || 0;
+  }
+  if (Object.keys(bankTotals).length) {
+    html += '<div class="recon-bank-summary"><div class="recon-bank-summary-title">סיכום לפי חשבון בנק</div>';
+    for (const [acc, totals] of Object.entries(bankTotals)) {
+      const items = [];
+      if (totals.upcoming)  items.push(`צפוי: <strong>${fmt(totals.upcoming)}</strong>`);
+      if (totals.matched)   items.push(`תואם: <strong>${fmt(totals.matched)}</strong>`);
+      if (totals.mismatch)  items.push(`אי-התאמה: <strong>${fmt(totals.mismatch)}</strong>`);
+      html += `<div class="recon-bank-row"><span>${acc}</span><span>${items.join(' | ')}</span></div>`;
+    }
+    html += '</div>';
+  }
+
+  el.innerHTML = html;
+  card.style.display = '';
 }
 
 // ── CC helpers ────────────────────────────────────────────────────────────────

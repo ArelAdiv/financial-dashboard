@@ -141,6 +141,96 @@ function saveProfile(data) {
   fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2), 'utf8');
 }
 
+// ── Card billing reconciliation ───────────────────────────────────────────────
+function shiftDate(dateStr, days) {
+  const d = new Date(dateStr + 'T12:00:00Z');
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().substring(0, 10);
+}
+
+// Company name aliases used when searching bank statement descriptions
+const CC_COMPANY_ALIASES = {
+  'כאל':     ['כאל', 'cal', 'לאומי קארד'],
+  'ישראכרט': ['ישראכרט', 'isracard'],
+  'מקס':     ['מקס', 'max', 'לאומי קארד'],
+};
+
+function findActualDebit(card, billingDate) {
+  if (!card.linked_account || !billingDate) return null;
+  const dateFrom = shiftDate(billingDate, -2);
+  const dateTo   = shiftDate(billingDate, +2);
+  const keywords = [
+    ...(CC_COMPANY_ALIASES[card.company] || [card.company].filter(Boolean)),
+    card.digits,
+  ].filter(Boolean);
+  if (!keywords.length) return null;
+  const conds  = keywords.map(() => 'LOWER(description) LIKE ?').join(' OR ');
+  const values = keywords.map(k => `%${k.toLowerCase()}%`);
+  const row = db.prepare(`
+    SELECT SUM(amount) AS total FROM transactions
+    WHERE date BETWEEN ? AND ? AND amount < 0
+      AND LOWER(account) LIKE ? AND (${conds})
+  `).get(dateFrom, dateTo, `%${card.linked_account.toLowerCase()}%`, ...values);
+  if (row?.total == null) return null;
+  return Math.round(Math.abs(row.total) * 100) / 100;
+}
+
+function recalcReconciliation(profileData) {
+  const cards = profileData?.creditCards || [];
+  if (!cards.length) return {};
+  const today = new Date();
+  const todayStr   = today.toISOString().substring(0, 10);
+  const todayDay   = today.getDate();
+  const todayYear  = today.getFullYear();
+  const todayMonth = today.getMonth() + 1;
+  const pad = n => String(n).padStart(2, '0');
+  const result = {};
+
+  for (const card of cards) {
+    const { digits, day: billingDay } = card;
+    if (!digits || !billingDay) continue;
+
+    // Next billing = first future occurrence; last billing = the one just before it
+    let nextY, nextM, lastY, lastM;
+    if (todayDay <= billingDay) {
+      [nextY, nextM] = [todayYear, todayMonth];
+      [lastY, lastM] = todayMonth === 1 ? [todayYear - 1, 12] : [todayYear, todayMonth - 1];
+    } else {
+      [nextY, nextM] = todayMonth === 12 ? [todayYear + 1, 1] : [todayYear, todayMonth + 1];
+      [lastY, lastM] = [todayYear, todayMonth];
+    }
+    const nextBilling = `${nextY}-${pad(nextM)}-${pad(billingDay)}`;
+    const lastBilling = `${lastY}-${pad(lastM)}-${pad(billingDay)}`;
+
+    const calcExpected = (y, m) => {
+      const row = db.prepare(`
+        SELECT COALESCE(SUM(ABS(amount)),0) AS total FROM transactions
+        WHERE card_digits=? AND (status='cleared' OR status='pending')
+          AND billing_date BETWEEN ? AND ? AND amount < 0
+      `).get(digits, `${y}-${pad(m)}-01`, `${y}-${pad(m)}-31`);
+      return Math.round((row?.total || 0) * 100) / 100;
+    };
+
+    // If bank debit found for last billing → matched/mismatch
+    const actual = findActualDebit(card, lastBilling);
+    if (actual !== null) {
+      const expected = calcExpected(lastY, lastM);
+      const diff = Math.round(Math.abs(actual - expected) * 100) / 100;
+      result[digits] = { billing_date: lastBilling, expected, actual,
+        status: diff <= 10 ? 'matched' : 'mismatch', diff };
+    } else if (todayStr < nextBilling) {
+      // No bank debit found yet → upcoming
+      result[digits] = { billing_date: nextBilling, expected: calcExpected(nextY, nextM),
+        actual: null, status: 'upcoming', diff: null };
+    } else {
+      // Billing date passed but no debit found → missing
+      result[digits] = { billing_date: nextBilling, expected: calcExpected(nextY, nextM),
+        actual: null, status: 'missing', diff: null };
+    }
+  }
+  return result;
+}
+
 // ── Insert helpers ────────────────────────────────────────────────────────────
 const insertTx = db.prepare(`
   INSERT OR IGNORE INTO transactions
@@ -289,6 +379,14 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
     }
   }
 
+  // Recalculate billing reconciliation after every CC upload
+  if (['cal_cc', 'isracard_cc', 'max_cc'].includes(result.sourceType)) {
+    const profileData = loadProfile() || {};
+    profileData.card_reconciliation = recalcReconciliation(profileData);
+    profileData.updatedAt = new Date().toISOString();
+    saveProfile(profileData);
+  }
+
   const detectedAccount = result.transactions[0]?.account || null;
 
   res.json({
@@ -304,6 +402,16 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
     preview:         result.transactions.slice(0, 5),
     warning:         result.warning || null
   });
+});
+
+// ── Reconciliation endpoint ───────────────────────────────────────────────────
+app.get('/api/reconciliation', (req, res) => {
+  const profileData = loadProfile() || {};
+  const recon = recalcReconciliation(profileData);
+  profileData.card_reconciliation = recon;
+  profileData.updatedAt = new Date().toISOString();
+  saveProfile(profileData);
+  res.json(recon);
 });
 
 // Labels and source types for known profile keys
