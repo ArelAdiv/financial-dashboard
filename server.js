@@ -304,7 +304,11 @@ const insertMany = db.transaction((rows) => {
       r.status   ?? 'cleared',
       r.pending_key ?? null
     );
-    if (info.changes > 0) inserted++;
+    if (info.changes > 0) {
+      inserted++;
+    } else {
+      console.log(`[insertMany] SKIPPED (duplicate): ${r.date} "${r.description}" ${r.amount} acct="${r.account}" ref="${r.reference}" bal=${r.balance}`);
+    }
   }
   return { inserted, promoted };
 });
