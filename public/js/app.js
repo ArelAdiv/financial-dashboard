@@ -1471,16 +1471,23 @@ function buildStaleAccounts() {
   const stale = {};
   if (!profile?.live_balances && !profile?.leumi_balances) return stale;
 
-  // Find the most recent transaction per account, sorted by date (same order as the table)
-  const acctInfo = {};
-  const sorted = [...transactions].sort((a, b) => (b.date || '').localeCompare(a.date || '') || b.id - a.id);
-  for (const t of sorted) {
-    if (!(t.account in acctInfo)) {
-      acctInfo[t.account] = { date: t.date || '', balance: t.balance, source_type: t.source_type };
+  // Find the most recent date per account and the set of balances on that date.
+  // We can't rely on insertion order (id) to determine which same-date transaction
+  // is the chronological last — different bank files order rows differently.
+  // Instead we collect all balances on the latest date and check if any of them
+  // matches the live balance report.
+  const acctLatest = {};  // account → { date, balances: Set, source_type }
+  for (const t of transactions) {
+    const prev = acctLatest[t.account];
+    if (!prev || t.date > prev.date) {
+      acctLatest[t.account] = { date: t.date || '', balances: new Set(), source_type: t.source_type };
+    }
+    if (t.date === acctLatest[t.account].date && t.balance !== null) {
+      acctLatest[t.account].balances.add(t.balance);
     }
   }
 
-  for (const [account, info] of Object.entries(acctInfo)) {
+  for (const [account, info] of Object.entries(acctLatest)) {
     let liveBalance = null, liveDate = null;
     if (info.source_type === 'leumi_transactions' && profile.leumi_balances) {
       liveBalance = profile.leumi_balances.checking;
@@ -1492,10 +1499,16 @@ function buildStaleAccounts() {
     }
     if (liveBalance === null) continue;
 
-    const balDiff   = info.balance !== null && Math.abs(info.balance - liveBalance) > 1;
+    // Stale if the report date is newer than the last transaction date AND
+    // none of the same-day balances are close to the live balance.
     const dateStale = liveDate && info.date && liveDate > info.date;
-    if (balDiff && dateStale) {
-      stale[account] = { liveBalance, liveDate, lastTxDate: info.date, lastTxBalance: info.balance };
+    const balMatch  = [...info.balances].some(bal => Math.abs(bal - liveBalance) <= 1);
+    if (dateStale && !balMatch) {
+      // Pick the minimum balance on the latest date as the representative value for display
+      const lastTxBalance = info.balances.size
+        ? Math.min(...info.balances)
+        : null;
+      stale[account] = { liveBalance, liveDate, lastTxDate: info.date, lastTxBalance };
     }
   }
   return stale;
