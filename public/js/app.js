@@ -238,6 +238,10 @@ function makeBankForm(i) {
     '</select></div>' +
     '<div class="field"><label>שם בעל החשבון (אם שונה)</label>' +
     '<input type="text" class="b-owner" placeholder="אופציונלי"></div>' +
+    '<div class="field"><label>מספר סניף</label>' +
+    '<input type="text" id="w-bank-branch-' + i + '" placeholder="412" style="direction:ltr"></div>' +
+    '<div class="field"><label>מספר חשבון</label>' +
+    '<input type="text" id="w-bank-account-' + i + '" placeholder="123456789" style="direction:ltr"></div>' +
     '</div>' +
     '<div class="field">' +
     '<label>אופן שימוש <span class="req">*</span></label>' +
@@ -375,10 +379,12 @@ function collectWizardData() {
     isAdult: false
   }));
 
-  const banks = Array.from(document.querySelectorAll('#banks-container .account-form')).map(r => ({
+  const banks = Array.from(document.querySelectorAll('#banks-container .account-form')).map((r, i) => ({
     bank: r.querySelector('.b-bank')?.value || '',
     usage: Array.from(r.querySelectorAll('.b-usage:checked')).map(cb => cb.value),
-    owner: r.querySelector('.b-owner')?.value.trim() || ''
+    owner: r.querySelector('.b-owner')?.value.trim() || '',
+    branch: document.getElementById('w-bank-branch-'+i)?.value.trim() || null,
+    account_number: document.getElementById('w-bank-account-'+i)?.value.trim() || null,
   }));
 
   const creditCards = Array.from(document.querySelectorAll('#cc-container .account-form')).map((r, i) => {
@@ -481,6 +487,10 @@ function populateWizardFromProfile() {
       form.querySelector('.b-owner').value = b.owner || '';
       const usages = b.usage || [];
       form.querySelectorAll('.b-usage').forEach(cb => { cb.checked = usages.includes(cb.value); });
+      const branchEl  = document.getElementById('w-bank-branch-' + i);
+      const accountEl = document.getElementById('w-bank-account-' + i);
+      if (branchEl)  branchEl.value  = b.branch         || '';
+      if (accountEl) accountEl.value = b.account_number || '';
     });
 
     // Fill credit cards
@@ -651,12 +661,29 @@ function renderDashboard() {
     return liveDate >= txDate ? liveBalance : txBalance;
   };
 
-  renderAccountSection('dash-banks', (profile.banks || []).map(b => ({
-    icon: '🏦', name: b.bank,
-    type: (b.usage || []).map(usageLabel).join(', ') || 'חשבון בנק',
-    balance: bestBankBalance(b.bank),
-    detail: b.owner ? `בעל: ${b.owner}` : ''
-  })));
+  // Render bank accounts with click-to-edit
+  const dashBanks = document.getElementById('dash-banks');
+  if (dashBanks) {
+    const bankItems = (profile.banks || []).map((b, i) => {
+      const bal = bestBankBalance(b.bank);
+      const balHtml = bal !== null ? `<div class="account-balance ${bal >= 0 ? 'pos' : 'neg'}">${fmt(Math.abs(bal))}</div>` : '';
+      const details = [
+        b.branch ? `סניף ${b.branch}` : null,
+        b.account_number ? `חשבון ${b.account_number}` : null,
+        b.owner ? `בעל: ${b.owner}` : null,
+      ].filter(Boolean).join(' · ');
+      return `<div class="account-item" onclick="openBankModal(${i})" style="cursor:pointer" title="לחץ לעריכה">
+        <div class="account-icon">🏦</div>
+        <div class="account-info">
+          <div class="account-name">${b.bank}</div>
+          <div class="account-type">${(b.usage || []).map(usageLabel).join(', ') || 'חשבון בנק'}</div>
+          ${details ? `<div class="account-detail">${details}</div>` : ''}
+        </div>
+        ${balHtml}
+      </div>`;
+    }).join('') || '<div class="empty-state">לא הוגדרו נתונים</div>';
+    dashBanks.innerHTML = bankItems;
+  }
 
   renderCCSection();
 
@@ -873,6 +900,45 @@ function renderCCSection() {
       <div style="font-size:11px;color:#bbb;margin-right:4px">✏️</div>
     </div>`;
   }).join('');
+}
+
+let _bankModalIdx = null;
+
+function openBankModal(idx) {
+  _bankModalIdx = idx;
+  const b = (profile?.banks || [])[idx] || {};
+  document.getElementById('bank-modal-name').value    = b.bank || '';
+  document.getElementById('bank-modal-branch').value  = b.branch || '';
+  document.getElementById('bank-modal-account').value = b.account_number || '';
+  document.getElementById('bank-modal-usage').value   = (b.usage || []).map(usageLabel).join(', ');
+  document.getElementById('bank-modal-owner').value   = b.owner || '';
+  document.getElementById('bank-modal-overlay').style.display = 'flex';
+}
+function closeBankModal() {
+  document.getElementById('bank-modal-overlay').style.display = 'none';
+}
+async function saveBankModal() {
+  const banks = JSON.parse(JSON.stringify(profile?.banks || []));
+  if (_bankModalIdx === null || _bankModalIdx >= banks.length) return;
+  // Parse usage back from label string
+  const usageLabelToKey = { 'עו"ש':'checking', 'חיסכון':'saving', 'פיקדון':'deposit', 'משכנתא':'mortgage', 'הלוואות':'loans', 'השקעות':'investments', 'עסקי':'business' };
+  const usageStr = document.getElementById('bank-modal-usage').value;
+  const usage = usageStr.split(/[,،]/).map(s => {
+    const t = s.trim();
+    return Object.entries(usageLabelToKey).find(([l]) => l === t)?.[1] || t;
+  }).filter(Boolean);
+  banks[_bankModalIdx] = {
+    ...banks[_bankModalIdx],
+    bank:           document.getElementById('bank-modal-name').value.trim(),
+    branch:         document.getElementById('bank-modal-branch').value.trim() || null,
+    account_number: document.getElementById('bank-modal-account').value.trim() || null,
+    usage,
+    owner:          document.getElementById('bank-modal-owner').value.trim() || null,
+  };
+  await fetch('/api/profile', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ banks }) });
+  profile = await fetch('/api/profile').then(r => r.json());
+  closeBankModal();
+  renderDashboard();
 }
 
 let _ccModalIdx = null;
