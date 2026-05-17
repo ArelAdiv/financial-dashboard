@@ -307,7 +307,7 @@ const insertMany = db.transaction((rows) => {
     if (info.changes > 0) {
       inserted++;
     } else {
-      console.log(`[insertMany] SKIPPED (duplicate): ${r.date} "${r.description}" ${r.amount} acct="${r.account}" ref="${r.reference}" bal=${r.balance}`);
+      console.log(`[insertMany] SKIPPED (duplicate): ${r.date} "${r.description}" ${r.amount} acct="${r.account}" ref="${r.reference}" bal=${r.balance} billing_date=${r.billing_date ?? 'null'}`);
     }
   }
   return { inserted, promoted };
