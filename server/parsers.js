@@ -1138,11 +1138,23 @@ function parseCal(rows, accountName, sourceFile) {
   for (const row of rows.slice(hi + 1)) {
     found++;
     const date = normalizeDate(row[dc.date]);
-    if (!date) { skipped++; continue; }
-    if (isSummaryRow(row)) { skipped++; continue; }
+    if (!date) {
+      skipped++;
+      console.log(`[cal_cc] skip row ${found}: no date — raw="${row[dc.date]}" full=${JSON.stringify(row)}`);
+      continue;
+    }
+    if (isSummaryRow(row)) {
+      skipped++;
+      console.log(`[cal_cc] skip row ${found}: summary — ${JSON.stringify(row)}`);
+      continue;
+    }
 
     const amountRaw = parseNum(row[dc.amount]);
-    if (amountRaw === null) { skipped++; continue; }
+    if (amountRaw === null) {
+      skipped++;
+      console.log(`[cal_cc] skip row ${found}: null amount — col=${dc.amount} raw="${row[dc.amount]}" full=${JSON.stringify(row)}`);
+      continue;
+    }
 
     const billingDate = dc.billing_date >= 0 ? normalizeDate(row[dc.billing_date]) : null;
     const txType      = dc.tx_type >= 0 ? str(row[dc.tx_type]) || null : null;
