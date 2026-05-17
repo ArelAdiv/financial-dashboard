@@ -1794,8 +1794,8 @@ function openUploadMeta(file) {
   // Populate report type with custom types from profile
   const customTypes = profile?.custom_report_types || [];
   const sel = document.getElementById('um-report-type');
-  // Remove old custom options (before "אחר...")
-  while (sel.options.length > 3) sel.remove(2);
+  // Remove old custom options only (static options: בחר סוג, תנועות, יתרות, אחר = 4 total)
+  while (sel.options.length > 4) sel.remove(3);
   customTypes.forEach(t => {
     const opt = document.createElement('option');
     opt.value = t; opt.textContent = t;
