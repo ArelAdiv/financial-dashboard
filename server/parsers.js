@@ -597,15 +597,27 @@ function parseLeumiTransactions(filePath, accountName, sourceFile) {
 
   const account = resolveAccount(extractLeumiAccountId(html), accountName, sourceFile);
 
-  // ── Method 1: per-table HTML regex — pick the table with תאריך ──────────
+  // ── Method 1: HTML tables — merge ALL tables that contain transaction columns ─
+  // Leumi HTML exports sometimes split cleared and pending transactions into
+  // separate <table> elements.  Collect all such tables and concatenate their
+  // data rows so no transactions are missed.
   let rows = [];
   const tables = parseHtmlTables(html);
   console.log(`[leumi_tx] html tables found: ${tables.length}, sizes: ${tables.map(t => t.length).join(', ')}`);
 
-  const txTable = findTableWithKeywords(tables, ['תאריך']);
-  if (txTable.length >= 2) {
-    rows = txTable;
-    console.log(`[leumi_tx] method=html-table rows=${rows.length} first=${JSON.stringify(rows[0])}`);
+  for (const table of tables) {
+    const joined = table.map(r => r.join(' ')).join(' ');
+    if (!joined.includes('תאריך')) continue;
+    let thi = findHeader(table, ['תאריך', 'חובה'], 40);
+    if (thi < 0) thi = findHeader(table, ['תאריך', 'יתרה'], 40);
+    if (thi < 0) thi = findHeader(table, ['תאריך', 'זכות'], 40);
+    if (thi < 0) continue;
+    if (rows.length === 0) {
+      rows = table;  // first valid table: keep header row for column detection below
+    } else {
+      rows = rows.concat(table.slice(thi + 1));  // subsequent tables: skip their header
+    }
+    console.log(`[leumi_tx] merged table thi=${thi} +${table.length - thi - 1} data rows`);
   }
 
   // ── Method 2: xlsx.readFile — pick sheet containing תאריך ────────────────
