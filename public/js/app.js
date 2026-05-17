@@ -1514,6 +1514,63 @@ function buildStaleAccounts() {
   return stale;
 }
 
+// Sort transactions for display: date DESC, then intra-day order by balance chain.
+// Within the same date+account, we reconstruct chronological order by verifying
+// that balance[prev] + amount[next] ≈ balance[next].  This is robust regardless
+// of whether the source file listed rows newest-first or oldest-first.
+function sortTransactionsForDisplay(rows) {
+  const TOLE = 0.05;
+
+  // First pass: rough sort by date DESC, id DESC to group same-date same-account rows
+  rows.sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.id || 0) - (a.id || 0));
+
+  const result = [];
+  let i = 0;
+  while (i < rows.length) {
+    const { date, account } = rows[i];
+    let j = i + 1;
+    while (j < rows.length && rows[j].date === date && rows[j].account === account) j++;
+    const group = rows.slice(i, j);
+
+    if (group.length > 1 && group.every(t => t.balance != null && t.amount != null)) {
+      // Build a chain: each tx's "expected previous balance" = balance - amount
+      // The first tx of the day has no predecessor within the group.
+      const findFirst = () => {
+        for (let k = 0; k < group.length; k++) {
+          const expectedPrev = group[k].balance - group[k].amount;
+          const hasPred = group.some((t, m) => m !== k && Math.abs(t.balance - expectedPrev) < TOLE);
+          if (!hasPred) return k;
+        }
+        return 0; // fallback
+      };
+
+      const firstIdx = findFirst();
+      const ordered  = [group[firstIdx]];
+      const used     = new Set([firstIdx]);
+      let cur        = group[firstIdx];
+
+      while (ordered.length < group.length) {
+        const nextIdx = group.findIndex((t, m) =>
+          !used.has(m) && Math.abs((t.balance - t.amount) - cur.balance) < TOLE);
+        if (nextIdx < 0) {
+          group.forEach((t, m) => { if (!used.has(m)) { ordered.push(t); used.add(m); } });
+          break;
+        }
+        ordered.push(group[nextIdx]);
+        used.add(nextIdx);
+        cur = group[nextIdx];
+      }
+
+      // Chain is oldest→newest; reverse so newest shows first
+      result.push(...ordered.reverse());
+    } else {
+      result.push(...group);
+    }
+    i = j;
+  }
+  return result;
+}
+
 function filterTransactions() {
   const bank   = document.getElementById('tx-filter-bank').value;
   const acct   = document.getElementById('tx-filter-account').value;
@@ -1541,8 +1598,7 @@ function filterTransactions() {
   const effectiveBank = selectedIsBank ? acct : (bank && !acct && type !== 'cc' ? null : null);
   if (selectedIsBank && !search && !type) synthetic = buildCCBillingRows(acct);
 
-  const allRows = [...filtered, ...synthetic]
-    .sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.id || 0) - (a.id || 0));
+  const allRows = sortTransactionsForDisplay([...filtered, ...synthetic]);
 
   const body  = document.getElementById('tx-body');
   const empty = document.getElementById('tx-empty');
