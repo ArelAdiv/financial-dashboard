@@ -1111,6 +1111,51 @@ function parseMax(filePath, accountName, sourceFile) {
 }
 
 // ── Cal ───────────────────────────────────────────────────────────────────────
+const INSTALLMENT_RE = /עסקה\s+ב[-–]?\s*\d+\s+תשלומ/;
+
+function addMonths(dateStr, n) {
+  const d = new Date(dateStr);
+  d.setMonth(d.getMonth() + n);
+  return d.toISOString().substring(0, 10);
+}
+
+// For installment transactions that share (date, description, amount), assign
+// sequential billing_dates so each installment gets a unique dedup key.
+function fixInstallmentBillingDates(transactions) {
+  // Group installment rows by (date, description, amount)
+  const groups = new Map();
+  for (const tx of transactions) {
+    if (!INSTALLMENT_RE.test(tx.notes || '') && !INSTALLMENT_RE.test(tx.category || '')) continue;
+    const key = `${tx.date}|${tx.description}|${tx.amount}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(tx);
+  }
+
+  for (const [, group] of groups) {
+    if (group.length < 2) continue;
+
+    // If billing_dates are already all distinct, nothing to do
+    const bdValues = group.map(t => t.billing_date);
+    const bdSet    = new Set(bdValues);
+    if (bdSet.size === group.length && !bdValues.includes(null)) continue;
+
+    // Find a base billing_date:
+    // 1. any non-null billing_date already in the group
+    // 2. any billing_date from a non-installment transaction in this batch
+    // 3. transaction date + 1 month as last resort
+    let base = bdValues.find(b => b != null);
+    if (!base) {
+      base = transactions.find(
+        t => t.billing_date && !INSTALLMENT_RE.test(t.notes || '') && !INSTALLMENT_RE.test(t.category || '')
+      )?.billing_date;
+    }
+    if (!base) base = addMonths(group[0].date, 1);
+
+    group.forEach((tx, i) => { tx.billing_date = addMonths(base, i); });
+    console.log(`[cal_cc] installment fix: "${group[0].description}" ${group[0].date} ×${group.length} base=${base}`);
+  }
+}
+
 function parseCal(rows, accountName, sourceFile) {
   const { digits, linked_account, account_id } = extractCalHeader(rows);
   const account = resolveAccount(account_id, accountName, sourceFile);
@@ -1178,6 +1223,13 @@ function parseCal(rows, accountName, sourceFile) {
       account, source: sourceFile, source_type: 'cal_cc'
     });
   }
+
+  // ── Fix installment dedup ──────────────────────────────────────────────────
+  // Cal reports include all installments of a split purchase as separate rows
+  // with identical (date, description, amount).  When billing_date is the same
+  // or null for all of them, the dedup index would block all but the first.
+  // Detect these groups and assign sequential billing months.
+  fixInstallmentBillingDates(transactions);
 
   console.log(`[cal_cc] found=${found} imported=${transactions.length} skipped=${skipped}`);
   return txResult(transactions, 'cal_cc', { found, imported: transactions.length, skipped });
