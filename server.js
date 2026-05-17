@@ -656,9 +656,13 @@ app.put('/api/accounts/rename', (req, res) => {
 app.get('/api/transactions', (req, res) => {
   const account = req.query.account;
   const limit   = parseInt(req.query.limit) || 2000;
+  // Sort by date DESC, then balance ASC (lowest balance = most debits applied = latest
+  // intra-day state), then id DESC as a tiebreaker.  This produces correct ordering
+  // even when a bank file (e.g. Leumi) stores rows newest-first so insertion id is
+  // the inverse of chronological order within the same date.
   const rows = account
-    ? db.prepare('SELECT * FROM transactions WHERE account = ? ORDER BY id DESC LIMIT ?').all(account, limit)
-    : db.prepare('SELECT * FROM transactions ORDER BY id DESC LIMIT ?').all(limit);
+    ? db.prepare('SELECT * FROM transactions WHERE account = ? ORDER BY date DESC, balance ASC, id DESC LIMIT ?').all(account, limit)
+    : db.prepare('SELECT * FROM transactions ORDER BY date DESC, balance ASC, id DESC LIMIT ?').all(limit);
   res.json(rows);
 });
 
