@@ -372,6 +372,27 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
   }
 
   // Transaction files → insert into SQLite
+  const cardDigitsHint = req.body.cardDigitsHint || null;
+  const forceOverride  = req.body.forceOverride === '1';
+
+  const detectedCardDigits = result.transactions[0]?.card_digits || null;
+  const detectedAccount    = result.transactions[0]?.account || null;
+
+  // If there's a card digits hint and no force override, check for conflict
+  if (!forceOverride && cardDigitsHint && detectedCardDigits && cardDigitsHint !== detectedCardDigits) {
+    return res.json({
+      ok: true, conflict: true,
+      detectedCardDigits, detectedAccount,
+      filename: req.file.originalname,
+      rows: result.transactions.length,
+    });
+  }
+
+  // Apply card digits override if forced
+  if (forceOverride && cardDigitsHint) {
+    result.transactions = result.transactions.map(t => ({ ...t, card_digits: cardDigitsHint }));
+  }
+
   const { inserted, promoted } = insertMany(result.transactions);
 
   // After a Max CC upload: recalculate pending totals per card and persist to profile
@@ -427,20 +448,19 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
     saveProfile(profileData);
   }
 
-  const detectedAccount = result.transactions[0]?.account || null;
-
   res.json({
     ok: true,
-    filename:        req.file.originalname,
-    rows:            result.transactions.length,
+    filename:           req.file.originalname,
+    rows:               result.transactions.length,
     inserted,
     promoted,
-    duplicates:      result.transactions.length - inserted - promoted,
-    sourceType:      result.sourceType,
+    duplicates:         result.transactions.length - inserted - promoted,
+    sourceType:         result.sourceType,
     detectedAccount,
-    stats:           result.stats || null,
-    preview:         result.transactions.slice(0, 5),
-    warning:         result.warning || null
+    detectedCardDigits,
+    stats:              result.stats || null,
+    preview:            result.transactions.slice(0, 5),
+    warning:            result.warning || null
   });
 });
 

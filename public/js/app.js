@@ -1778,63 +1778,225 @@ async function saveTxCategory(description, category) {
 async function handleUpload(event) {
   const file = event.target.files[0];
   if (!file) return;
-  await doUpload(file);
+  openUploadMeta(file);
   event.target.value = '';
 }
 
-async function doUpload(file) {
-  const accountName = document.getElementById('upload-account-name').value || file.name;
-  const formData = new FormData();
-  formData.append('file', file);
-  formData.append('accountName', accountName);
+// ── Upload meta modal ─────────────────────────────────────────────────────────
+let _pendingUploadFile    = null;
+let _pendingOverrideParams = null;
+let _conflictResolve      = null;
+
+function openUploadMeta(file) {
+  _pendingUploadFile = file;
+  document.getElementById('upload-meta-filename').textContent = file.name;
+
+  // Populate report type with custom types from profile
+  const customTypes = profile?.custom_report_types || [];
+  const sel = document.getElementById('um-report-type');
+  // Remove old custom options (before "אחר...")
+  while (sel.options.length > 3) sel.remove(2);
+  customTypes.forEach(t => {
+    const opt = document.createElement('option');
+    opt.value = t; opt.textContent = t;
+    sel.insertBefore(opt, sel.options[sel.options.length - 1]);
+  });
+  sel.value = '';
+  document.getElementById('um-report-type-custom').style.display = 'none';
+  document.getElementById('um-report-type-custom').value = '';
+
+  // Populate accounts from profile.banks
+  const acctSel = document.getElementById('um-account');
+  acctSel.innerHTML = '<option value="">אין חשבון משוייך</option>';
+  (profile?.banks || []).forEach((b, i) => {
+    const label = [b.bank, b.branch ? `סניף ${b.branch}` : null, b.account_number ? `חשבון ${b.account_number}` : null].filter(Boolean).join(' — ');
+    const opt = document.createElement('option');
+    opt.value = i; opt.textContent = label;
+    acctSel.appendChild(opt);
+  });
+
+  // Populate card types
+  const ctSel = document.getElementById('um-card-type');
+  ctSel.innerHTML = '<option value="">לא רלוונטי</option>';
+  const companies = [...new Set((profile?.creditCards || []).map(c => c.company).filter(Boolean))];
+  companies.forEach(co => {
+    const opt = document.createElement('option');
+    opt.value = co; opt.textContent = co;
+    ctSel.appendChild(opt);
+  });
+  document.getElementById('um-card-suffix-field').style.display = 'none';
+  document.getElementById('um-card-suffix').innerHTML = '<option value="">-- בחר --</option>';
+
+  document.getElementById('upload-meta-overlay').classList.remove('hidden');
+}
+
+function cancelUploadMeta() {
+  document.getElementById('upload-meta-overlay').classList.add('hidden');
+  _pendingUploadFile = null;
+}
+
+function onUploadMetaReportTypeChange() {
+  const sel = document.getElementById('um-report-type');
+  const customInput = document.getElementById('um-report-type-custom');
+  customInput.style.display = sel.value === 'other' ? '' : 'none';
+}
+
+function onUploadMetaCardTypeChange() {
+  const company = document.getElementById('um-card-type').value;
+  const suffixField = document.getElementById('um-card-suffix-field');
+  const suffixSel   = document.getElementById('um-card-suffix');
+  if (!company) {
+    suffixField.style.display = 'none';
+    return;
+  }
+  suffixField.style.display = '';
+  suffixSel.innerHTML = '<option value="">-- בחר --</option>';
+  const cards = (profile?.creditCards || []).filter(c => c.company === company && c.digits);
+  cards.forEach(c => {
+    const opt = document.createElement('option');
+    opt.value = c.digits; opt.textContent = `•••• ${c.digits}`;
+    suffixSel.appendChild(opt);
+  });
+}
+
+async function confirmUploadMeta() {
+  const reportTypeSel = document.getElementById('um-report-type').value;
+  const customType    = document.getElementById('um-report-type-custom').value.trim();
+  const reportType    = reportTypeSel === 'other' ? customType : reportTypeSel;
+
+  if (!reportType) { alert('יש לבחור סוג דוח'); return; }
+
+  // Save custom type to profile if new
+  if (reportTypeSel === 'other' && customType) {
+    const existing = profile?.custom_report_types || [];
+    if (!existing.includes(customType)) {
+      await fetch('/api/profile', { method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ custom_report_types: [...existing, customType] }) });
+      profile = await fetch('/api/profile').then(r => r.json());
+    }
+  }
+
+  const bankIdx     = document.getElementById('um-account').value;
+  const cardCompany = document.getElementById('um-card-type').value;
+  const cardSuffix  = document.getElementById('um-card-suffix').value;
+
+  const bank = bankIdx !== '' ? (profile?.banks || [])[parseInt(bankIdx)] : null;
+
+  _pendingOverrideParams = {
+    reportType,
+    accountOverride:    bank ? (bank.account_number || bank.bank) : null,
+    bankName:           bank?.bank || null,
+    cardDigitsOverride: cardSuffix || null,
+    cardCompany:        cardCompany || null,
+  };
+
+  document.getElementById('upload-meta-overlay').classList.add('hidden');
+  await doUploadFile(_pendingUploadFile, _pendingOverrideParams);
+}
+
+function resolveUploadConflict(useUserChoice) {
+  document.getElementById('upload-conflict-overlay').classList.add('hidden');
+  if (_conflictResolve) _conflictResolve(useUserChoice);
+}
+
+function showUploadResult(data) {
+  const status = document.getElementById('upload-status');
+  if (!status) return;
+  if (data.profileUpdated) {
+    let successText;
+    if (data.profileUpdated === 'live_balances' && profile?.live_balances?.checking != null) {
+      successText = `נטענו נתוני יתרות בהצלחה — יתרת עו"ש: ${fmt(profile.live_balances.checking)}`;
+    } else if (data.profileUpdated === 'leumi_balances' && profile?.leumi_balances) {
+      const llb = profile.leumi_balances;
+      const loanAbs = Math.abs(llb.loans_total ?? 0);
+      successText = `נטענו נתוני יתרות לאומי בהצלחה — עו"ש: ${fmt(llb.checking)} | חוב הלוואות: ${fmt(loanAbs)}`;
+    } else {
+      const count = data.inserted || 0;
+      successText = `דוח יתרות עודכן מ-${data.filename}${count > 0 ? ` — ${count} סעיפים נקלטו` : ''}`;
+    }
+    let msg = `<div class="upload-success">✓ ${successText}</div>`;
+    if (data.warning) msg += `<div class="upload-warning" style="margin-top:8px;white-space:pre-line">${data.warning}</div>`;
+    status.innerHTML = msg;
+  } else if (data.inserted === 0 && data.warning) {
+    status.innerHTML = `<div class="upload-warning" style="white-space:pre-line">${data.warning}</div>`;
+  } else {
+    const skipped = data.stats?.skipped ?? (data.rows - data.inserted);
+    const skippedNote  = skipped > 0       ? ` (${skipped} שורות דולגו)` : '';
+    const promotedNote = data.promoted > 0 ? ` | עודכנו ${data.promoted} עסקאות מ״טרם נקלט״ ל״נקלט״` : '';
+    const accountNote  = data.detectedAccount ? `<br><span style="font-size:12px;opacity:.8">חשבון שזוהה: <strong>${data.detectedAccount}</strong></span>` : '';
+    let msg = `<div class="upload-success">✓ נטענו בהצלחה ${data.inserted} שורות חדשות מ-${data.filename}${skippedNote}${promotedNote}${accountNote}</div>`;
+    if (data.warning) msg += `<div class="upload-warning" style="margin-top:8px">${data.warning}</div>`;
+    status.innerHTML = msg;
+  }
+}
+
+async function doUploadFile(file, meta) {
+  const fd = new FormData();
+  fd.append('file', file);
+  // Use meta accountOverride if provided, otherwise fall back to the manual input field
+  const accountName = (meta?.accountOverride) || document.getElementById('upload-account-name').value || file.name;
+  fd.append('accountName', accountName);
+  if (meta?.cardDigitsOverride) fd.append('cardDigitsHint', meta.cardDigitsOverride);
+  if (meta?.reportType)         fd.append('reportType', meta.reportType);
 
   const status = document.getElementById('upload-status');
-  status.innerHTML = '<div style="color:#666;font-size:13px">מעלה ומנתח...</div>';
+  if (status) status.innerHTML = '<div style="color:#666;font-size:13px">מעלה ומנתח...</div>';
 
   try {
-    const res = await fetch('/api/upload', { method: 'POST', body: formData });
+    const res  = await fetch('/api/upload', { method: 'POST', body: fd });
     const data = await res.json();
-    if (data.ok) {
-      transactions = await fetch('/api/transactions').then(r => r.json());
-      renderDashboard();
-      loadUploads();
-      loadAccountsMgmt();
 
-      // Balance/profile report uploaded
-      if (data.profileUpdated) {
-        profile = await fetch('/api/profile').then(r => r.json());
-        renderDashboard();
-        let successText;
-        if (data.profileUpdated === 'live_balances' && profile.live_balances?.checking != null) {
-          successText = `נטענו נתוני יתרות בהצלחה — יתרת עו"ש: ${fmt(profile.live_balances.checking)}`;
-        } else if (data.profileUpdated === 'leumi_balances' && profile.leumi_balances) {
-          const llb = profile.leumi_balances;
-          const loanAbs = Math.abs(llb.loans_total ?? 0);
-          successText = `נטענו נתוני יתרות לאומי בהצלחה — עו"ש: ${fmt(llb.checking)} | חוב הלוואות: ${fmt(loanAbs)}`;
-        } else {
-          const count = data.inserted || 0;
-          successText = `דוח יתרות עודכן מ-${data.filename}${count > 0 ? ` — ${count} סעיפים נקלטו` : ''}`;
-        }
-        let msg = `<div class="upload-success">✓ ${successText}</div>`;
-        if (data.warning) msg += `<div class="upload-warning" style="margin-top:8px;white-space:pre-line">${data.warning}</div>`;
-        status.innerHTML = msg;
-      // If 0 rows and there's a warning (e.g. frameset file), show only the warning
-      } else if (data.inserted === 0 && data.warning) {
-        status.innerHTML = `<div class="upload-warning" style="white-space:pre-line">${data.warning}</div>`;
-      } else {
-        const skipped = data.stats?.skipped ?? (data.rows - data.inserted);
-        const skippedNote   = skipped > 0       ? ` (${skipped} שורות דולגו)` : '';
-        const promotedNote  = data.promoted > 0 ? ` | עודכנו ${data.promoted} עסקאות מ״טרם נקלט״ ל״נקלט״` : '';
-        const accountNote = data.detectedAccount ? `<br><span style="font-size:12px;opacity:.8">חשבון שזוהה: <strong>${data.detectedAccount}</strong></span>` : '';
-        let msg = `<div class="upload-success">✓ נטענו בהצלחה ${data.inserted} שורות חדשות מ-${data.filename}${skippedNote}${promotedNote}${accountNote}</div>`;
-        if (data.warning) msg += `<div class="upload-warning" style="margin-top:8px">${data.warning}</div>`;
-        status.innerHTML = msg;
-      }
-    } else {
-      status.innerHTML = `<div class="upload-error">שגיאה: ${data.error}</div>`;
+    if (!res.ok) throw new Error(data.error || 'שגיאה');
+
+    // Conflict detection
+    const conflicts = [];
+    if (meta?.cardDigitsOverride && data.detectedCardDigits &&
+        data.detectedCardDigits !== meta.cardDigitsOverride) {
+      conflicts.push(`סיומת כרטיס: זוהה <strong>${data.detectedCardDigits}</strong>, בחרת <strong>${meta.cardDigitsOverride}</strong>`);
     }
+    if (meta?.accountOverride && data.detectedAccount &&
+        !data.detectedAccount.toLowerCase().includes((meta.accountOverride || '').toLowerCase()) &&
+        !(meta.accountOverride || '').toLowerCase().includes((data.detectedAccount || '').toLowerCase())) {
+      conflicts.push(`חשבון: זוהה <strong>${data.detectedAccount}</strong>, בחרת <strong>${meta.accountOverride}</strong>`);
+    }
+
+    if (conflicts.length) {
+      document.getElementById('upload-conflict-body').innerHTML =
+        '<p>נמצאה אי-התאמה בין הקובץ שהועלה לבין הבחירות שלך:</p><ul style="margin:8px 0 0 1rem">' +
+        conflicts.map(c => `<li>${c}</li>`).join('') + '</ul>';
+      document.getElementById('upload-conflict-overlay').classList.remove('hidden');
+      const useUserChoice = await new Promise(r => { _conflictResolve = r; });
+
+      if (useUserChoice) {
+        // Re-upload with force override
+        const fd2 = new FormData();
+        fd2.append('file', file);
+        fd2.append('accountName', accountName);
+        if (meta?.cardDigitsOverride) fd2.append('cardDigitsHint', meta.cardDigitsOverride);
+        if (meta?.reportType)         fd2.append('reportType', meta.reportType);
+        fd2.append('forceOverride', '1');
+        const res2  = await fetch('/api/upload', { method: 'POST', body: fd2 });
+        const data2 = await res2.json();
+        if (!res2.ok) throw new Error(data2.error || 'שגיאה');
+        transactions = await fetch('/api/transactions').then(r => r.json());
+        if (data2.profileUpdated) profile = await fetch('/api/profile').then(r => r.json());
+        renderDashboard();
+        loadUploads();
+        loadAccountsMgmt();
+        showUploadResult(data2);
+        return;
+      }
+    }
+
+    // Normal success path
+    transactions = await fetch('/api/transactions').then(r => r.json());
+    if (data.profileUpdated) profile = await fetch('/api/profile').then(r => r.json());
+    renderDashboard();
+    loadUploads();
+    loadAccountsMgmt();
+    showUploadResult(data);
   } catch (e) {
-    status.innerHTML = `<div class="upload-error">שגיאה בהעלאה: ${e.message}</div>`;
+    if (status) status.innerHTML = `<div class="upload-error">שגיאה בהעלאה: ${e.message}</div>`;
   }
 }
 
@@ -1847,7 +2009,7 @@ function setupDrop() {
     e.preventDefault();
     dz.classList.remove('drag-over');
     const file = e.dataTransfer.files[0];
-    if (file) await doUpload(file);
+    if (file) openUploadMeta(file);
   });
 }
 
