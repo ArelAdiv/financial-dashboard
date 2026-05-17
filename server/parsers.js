@@ -597,27 +597,34 @@ function parseLeumiTransactions(filePath, accountName, sourceFile) {
 
   const account = resolveAccount(extractLeumiAccountId(html), accountName, sourceFile);
 
-  // ── Method 1: HTML tables — merge ALL tables that contain transaction columns ─
-  // Leumi HTML exports sometimes split cleared and pending transactions into
-  // separate <table> elements.  Collect all such tables and concatenate their
-  // data rows so no transactions are missed.
+  // ── Method 1: extract every <tr> from raw HTML (table-boundary-agnostic) ───
+  // parseHtmlTables uses a lazy <table>…</table> regex that truncates when the
+  // file contains a nested <table> (e.g. a footer/summary box inside the main
+  // table).  Extracting <tr> rows directly avoids that problem because <tr>
+  // elements are always self-contained (never nested).
   let rows = [];
-  const tables = parseHtmlTables(html);
-  console.log(`[leumi_tx] html tables found: ${tables.length}, sizes: ${tables.map(t => t.length).join(', ')}`);
-
-  for (const table of tables) {
-    const joined = table.map(r => r.join(' ')).join(' ');
-    if (!joined.includes('תאריך')) continue;
-    let thi = findHeader(table, ['תאריך', 'חובה'], 40);
-    if (thi < 0) thi = findHeader(table, ['תאריך', 'יתרה'], 40);
-    if (thi < 0) thi = findHeader(table, ['תאריך', 'זכות'], 40);
-    if (thi < 0) continue;
-    if (rows.length === 0) {
-      rows = table;  // first valid table: keep header row for column detection below
-    } else {
-      rows = rows.concat(table.slice(thi + 1));  // subsequent tables: skip their header
+  {
+    const decEnt   = s => s.replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>')
+                           .replace(/&nbsp;/g,' ').replace(/&quot;/g,'"')
+                           .replace(/&#(\d+);/g,(_,n)=>String.fromCharCode(+n));
+    const stripTag = s => s.replace(/<[^>]+>/g,'');
+    const stripDir = s => s.replace(/[‎‏‪-‮]/g,'');
+    const trRe2    = /<tr\b[^>]*>([\s\S]*?)<\/tr>/gi;
+    const cellRe2  = /<t[dh]\b[^>]*>([\s\S]*?)<\/t[dh]>/gi;
+    let trm;
+    const allTrRows = [];
+    trRe2.lastIndex = 0;
+    while ((trm = trRe2.exec(html)) !== null) {
+      const cells = [];
+      const cr = new RegExp(cellRe2.source, 'gi');
+      let m;
+      while ((m = cr.exec(trm[0])) !== null) {
+        cells.push(stripDir(decEnt(stripTag(m[1]))).trim());
+      }
+      if (cells.some(c => c)) allTrRows.push(cells);
     }
-    console.log(`[leumi_tx] merged table thi=${thi} +${table.length - thi - 1} data rows`);
+    if (allTrRows.length >= 3) rows = allTrRows;
+    console.log(`[leumi_tx] method=all-tr rows=${rows.length}`);
   }
 
   // ── Method 2: xlsx.readFile — pick sheet containing תאריך ────────────────
@@ -670,8 +677,16 @@ function parseLeumiTransactions(filePath, accountName, sourceFile) {
   for (const row of rows.slice(hi + 1)) {
     found++;
     const date = normalizeDate(row[dc.date]);
-    if (!date) { skipped++; continue; }
-    if (isSummaryRow(row)) { skipped++; continue; }
+    if (!date) {
+      skipped++;
+      if (found <= 5) console.log(`[leumi_tx] skip row ${found}: no date — raw="${row[dc.date]}"`);
+      continue;
+    }
+    if (isSummaryRow(row)) {
+      skipped++;
+      if (found <= 5) console.log(`[leumi_tx] skip row ${found}: summary row`);
+      continue;
+    }
 
     const credit = dc.credit >= 0 ? parseNum(row[dc.credit]) : null;
     const debit  = dc.debit  >= 0 ? parseNum(row[dc.debit])  : null;
@@ -679,7 +694,11 @@ function parseLeumiTransactions(filePath, accountName, sourceFile) {
     let amount = 0;
     if (credit !== null && credit !== 0)     amount =  Math.abs(credit);
     else if (debit !== null && debit !== 0)  amount = -Math.abs(debit);
-    else { skipped++; continue; }
+    else {
+      skipped++;
+      if (found <= 5) console.log(`[leumi_tx] skip row ${found}: zero amount — credit="${row[dc.credit]}" debit="${row[dc.debit]}"`);
+      continue;
+    }
 
     transactions.push({
       date,
